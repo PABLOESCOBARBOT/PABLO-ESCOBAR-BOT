@@ -180,11 +180,6 @@ async function runMatch(
   while (match.scoreHost < raceTo && match.scoreGuest < raceTo) {
     match.round += 1;
     chatStore.save(match);
-    await bot.telegram.sendMessage(
-      match.chatId,
-      `${scoreLine()}\n\nRound ${match.round} — throw!`,
-      { parse_mode: "Markdown" },
-    );
 
     let hostDisplay: string;
     let guestDisplay: string;
@@ -194,25 +189,28 @@ async function runMatch(
 
     const plan = g.throwPlan?.(mode);
     if (plan) {
-      const guestResult = await collectThrows(
-        bot,
-        match.chatId,
-        { userId: match.guest?.userId ?? "bot", name: guestName },
-        match.opponent === "bot",
-        plan,
-      );
-      guestValue = guestResult.value;
-      guestDisplay = guestResult.display;
-
+      // Host / user always throws first, then bot or opponent
       const hostResult = await collectThrows(
         bot,
         match.chatId,
         match.host,
         false,
         plan,
+        match.opponent === "bot" ? "you" : "named",
       );
       hostValue = hostResult.value;
       hostDisplay = hostResult.display;
+
+      const guestResult = await collectThrows(
+        bot,
+        match.chatId,
+        { userId: match.guest?.userId ?? "bot", name: guestName },
+        match.opponent === "bot",
+        plan,
+        match.opponent === "bot" ? "me" : "named",
+      );
+      guestValue = guestResult.value;
+      guestDisplay = guestResult.display;
 
       winner =
         hostValue > guestValue ? "host" : hostValue < guestValue ? "guest" : "draw";
@@ -242,11 +240,10 @@ async function runMatch(
 
     await bot.telegram.sendMessage(
       match.chatId,
-      `${scoreLine()}\n\n` +
-        `${guestName}: ${guestDisplay}\n` +
+      `${scoreLine()}\n` +
         `${match.host.name}: ${hostDisplay}\n` +
-        `${pointLine}\n` +
-        `Score: *${match.scoreHost}* — *${match.scoreGuest}*`,
+        `${guestName}: ${guestDisplay}\n` +
+        `${pointLine}`,
       { parse_mode: "Markdown" },
     );
     chatStore.save(match);
@@ -311,38 +308,34 @@ async function runMatch(
   chatStore.delete(match.id);
 }
 
+type TurnStyle = "you" | "me" | "named";
+
 async function collectThrows(
   bot: Telegraf<ChatBotContext>,
   chatId: number,
   player: { userId: string; name: string },
   isBot: boolean,
   plan: ThrowPlan,
+  turn: TurnStyle,
 ): Promise<{ value: number; display: string }> {
   const values: number[] = [];
   for (let i = 0; i < plan.throws; i++) {
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
-      await bot.telegram.sendMessage(
-        chatId,
-        `*${player.name}* throwing ${plan.emoji}${nLabel}…`,
-        { parse_mode: "Markdown" },
-      );
+      await bot.telegram.sendMessage(chatId, `My turn${nLabel}`);
       values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
     } else {
-      await bot.telegram.sendMessage(
-        chatId,
-        `*${player.name}* — send ${plan.emoji}${nLabel}`,
-        { parse_mode: "Markdown" },
-      );
+      const prompt =
+        turn === "you"
+          ? `Your turn — send ${plan.emoji}${nLabel}`
+          : `${player.name} — your turn, send ${plan.emoji}${nLabel}`;
+      await bot.telegram.sendMessage(chatId, prompt);
       try {
         const v = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
         values.push(v);
         await sleep(diceAnimMs(plan.emoji));
       } catch {
-        await bot.telegram.sendMessage(
-          chatId,
-          `${player.name} timed out — auto ${plan.emoji}`,
-        );
+        await bot.telegram.sendMessage(chatId, `Timed out — auto ${plan.emoji}`);
         values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
       }
     }
