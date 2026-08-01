@@ -119,7 +119,7 @@ export async function getMinAmountUsd(payCurrency: string): Promise<number> {
 
 /**
  * Create a crypto payment (address + amount). Works with API key (no JWT).
- * priceAmountUsd should be >= getMinAmountUsd(payCurrency).
+ * May fail if priceAmountUsd is below the merchant minimum (~$19 on some accounts).
  */
 export async function createPayment(
   payCurrency: string,
@@ -141,9 +141,12 @@ export async function createPayment(
   return apiCall<NowPaymentsPayment>("POST", "/payment", payload);
 }
 
-/** Hosted invoice checkout (optional; IPN recommended). */
+/**
+ * Hosted invoice checkout — supports lower amounts (e.g. $5) even when
+ * /payment rejects AMOUNT_MINIMAL_ERROR. User sees address on NOWPayments page.
+ */
 export async function createInvoice(
-  payCurrency: string,
+  payCurrency: string | undefined,
   priceAmountUsd: number,
   orderId: string,
   description?: string,
@@ -151,15 +154,42 @@ export async function createInvoice(
   const payload: Record<string, unknown> = {
     price_amount: priceAmountUsd,
     price_currency: "usd",
-    pay_currency: payCurrency.toLowerCase(),
     order_id: orderId,
     order_description: description ?? "Casino Deposit",
   };
+  if (payCurrency) payload.pay_currency = payCurrency.toLowerCase();
 
   const ipnUrl = getIpnCallbackUrl();
   if (ipnUrl) payload.ipn_callback_url = ipnUrl;
 
   return apiCall<NowPaymentsInvoice>("POST", "/invoice", payload);
+}
+
+/** Try direct payment (with address); on min-amount error fall back to invoice. */
+export async function createDepositCheckout(
+  payCurrency: string,
+  priceAmountUsd: number,
+  orderId: string,
+  description?: string,
+): Promise<
+  | { mode: "payment"; payment: NowPaymentsPayment }
+  | { mode: "invoice"; invoice: NowPaymentsInvoice }
+> {
+  try {
+    const payment = await createPayment(payCurrency, priceAmountUsd, orderId, description);
+    if (payment.pay_address) {
+      return { mode: "payment", payment };
+    }
+  } catch (e) {
+    const msg = String(e);
+    if (!msg.includes("AMOUNT") && !msg.includes("AMOUNT_MINIMAL") && !msg.includes("minimal")) {
+      // unexpected error — still try invoice as fallback for UX
+      logger.warn({ e, orderId }, "NOWPayments createPayment failed — trying invoice");
+    }
+  }
+
+  const invoice = await createInvoice(payCurrency, priceAmountUsd, orderId, description);
+  return { mode: "invoice", invoice };
 }
 
 /** Get a single payment by id (API key works). */

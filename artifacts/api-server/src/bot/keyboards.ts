@@ -183,13 +183,36 @@ export function playAgainMenu(game: string): InlineKeyboardMarkup {
   };
 }
 
-export function depositMenu(addresses: { crypto: string; label: string }[]): InlineKeyboardMarkup {
+export function depositMenu(
+  addresses: { crypto: string; label: string }[],
+  opts?: { showManualConfirm?: boolean },
+): InlineKeyboardMarkup {
   const rows = addresses.map(a => [
     { text: a.label, callback_data: `deposit_crypto_${a.crypto}` },
   ]);
-  rows.push([{ text: "📋 Confirm Deposit", callback_data: "deposit_confirm" }]);
+  if (opts?.showManualConfirm) {
+    rows.push([{ text: "📋 Confirm Manual Deposit", callback_data: "deposit_confirm" }]);
+  }
   rows.push([{ text: "🔙 Back", callback_data: "main_menu" }]);
   return { inline_keyboard: rows };
+}
+
+/** Amount picker for NOWPayments (min $5) */
+export function depositAmountMenu(crypto: string): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "$5", callback_data: `deposit_amt_${crypto}_5` },
+        { text: "$10", callback_data: `deposit_amt_${crypto}_10` },
+        { text: "$20", callback_data: `deposit_amt_${crypto}_20` },
+      ],
+      [
+        { text: "$50", callback_data: `deposit_amt_${crypto}_50` },
+        { text: "$100", callback_data: `deposit_amt_${crypto}_100` },
+      ],
+      [{ text: "🔙 Back", callback_data: "menu_deposit" }],
+    ],
+  };
 }
 
 export function withdrawMenu(addresses: { crypto: string; label: string }[]): InlineKeyboardMarkup {

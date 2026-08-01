@@ -24,12 +24,21 @@ import {
 } from "./db-helpers";
 import {
   isNowPaymentsEnabled,
-  createPayment,
-  getMinAmountUsd,
+  createDepositCheckout,
   getPayment,
   isPaymentComplete,
   NOWPAYMENTS_CURRENCY_MAP,
 } from "./nowpayments";
+
+const DEFAULT_DEPOSIT_COINS = [
+  { crypto: "usdt_trc20", label: "USDT (TRC20)" },
+  { crypto: "usdt_erc20", label: "USDT (ERC20)" },
+  { crypto: "btc", label: "Bitcoin (BTC)" },
+  { crypto: "eth", label: "Ethereum (ETH)" },
+  { crypto: "ton", label: "TON" },
+  { crypto: "bnb", label: "BNB (BSC)" },
+  { crypto: "ltc", label: "Litecoin (LTC)" },
+];
 import {
   mainMenu,
   gamesMenu,
@@ -41,6 +50,7 @@ import {
   crashMenu,
   playAgainMenu,
   depositMenu,
+  depositAmountMenu,
   withdrawMenu,
   pvpMenu,
   pvpAcceptMenu,
@@ -130,15 +140,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return;
     }
     if (payload === "deposit") {
-      const addresses = await getDepositAddresses();
-      if (addresses.length === 0) {
-        await ctx.reply("⚠️ No deposit addresses configured yet. Contact admin.", { reply_markup: mainMenu() });
-        return;
-      }
-      await ctx.reply("📥 *Deposit Chips*\n\nSelect a cryptocurrency to deposit:", {
-        parse_mode: "Markdown",
-        reply_markup: depositMenu(addresses.map(a => ({ crypto: a.crypto, label: a.label }))),
-      });
+      await showDepositOptions(ctx, true);
       return;
     }
     if (payload === "withdraw") {
@@ -335,7 +337,19 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     if (data.startsWith("deposit_np_") || data.startsWith("deposit_cp_")) {
       const crypto = data.replace(/^deposit_(np|cp)_/, "");
-      return handleNowPaymentsDeposit(ctx, tgId, crypto);
+      // Ask for amount (min $5)
+      return ctx.editMessageText(
+        `💵 *Select deposit amount*\n\nMin: *$5* → 5 Chips\n1 Chip = $1`,
+        { parse_mode: "Markdown", reply_markup: depositAmountMenu(crypto) },
+      );
+    }
+    if (data.startsWith("deposit_amt_")) {
+      // deposit_amt_<crypto>_<amount>  crypto may contain underscores
+      const rest = data.replace("deposit_amt_", "");
+      const amountStr = rest.split("_").pop()!;
+      const crypto = rest.slice(0, rest.length - amountStr.length - 1);
+      const amount = parseInt(amountStr, 10);
+      return handleNowPaymentsDeposit(ctx, tgId, crypto, amount);
     }
     if (data.startsWith("deposit_check_")) {
       const txId = parseInt(data.replace("deposit_check_", ""), 10);
@@ -599,103 +613,77 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     });
   }
 
-  async function handleDepositMenu(ctx: BotContext) {
+  async function showDepositOptions(ctx: BotContext, asReply = false) {
     const addresses = await getDepositAddresses();
     const npOn = isNowPaymentsEnabled();
-
-    // Prefer configured addresses; if none but NOWPayments is on, offer default coins
     const options =
       addresses.length > 0
         ? addresses.map(a => ({ crypto: a.crypto, label: a.label }))
         : npOn
-          ? [
-              { crypto: "usdt_trc20", label: "USDT (TRC20)" },
-              { crypto: "usdt_erc20", label: "USDT (ERC20)" },
-              { crypto: "btc", label: "Bitcoin (BTC)" },
-              { crypto: "eth", label: "Ethereum (ETH)" },
-              { crypto: "ton", label: "TON" },
-              { crypto: "bnb", label: "BNB (BSC)" },
-              { crypto: "ltc", label: "Litecoin (LTC)" },
-            ]
+          ? DEFAULT_DEPOSIT_COINS
           : [];
 
     if (options.length === 0) {
-      return ctx.editMessageText(
-        "⚠️ No deposit methods configured yet. Please contact the admin.",
-        { reply_markup: mainMenu() },
-      );
+      const text = "⚠️ No deposit methods configured yet. Please contact the admin.";
+      return asReply
+        ? ctx.reply(text, { reply_markup: mainMenu() })
+        : ctx.editMessageText(text, { reply_markup: mainMenu() });
     }
-    return ctx.editMessageText(
-      "📥 *Deposit Chips*\n\nSelect a cryptocurrency to deposit:" +
-        (npOn ? "\n\n⚡ Auto deposit via NOWPayments available." : ""),
-      {
-        parse_mode: "Markdown",
-        reply_markup: depositMenu(options),
-      },
-    );
+
+    const text =
+      "📥 *Deposit Chips*\n\n" +
+      "Select a cryptocurrency:\n" +
+      "💵 Min deposit: *$5* (5 Chips)\n" +
+      (npOn ? "⚡ Auto credit via NOWPayments\n" : "");
+
+    const markup = depositMenu(options, { showManualConfirm: addresses.length > 0 && !npOn });
+    return asReply
+      ? ctx.reply(text, { parse_mode: "Markdown", reply_markup: markup })
+      : ctx.editMessageText(text, { parse_mode: "Markdown", reply_markup: markup });
+  }
+
+  async function handleDepositMenu(ctx: BotContext) {
+    return showDepositOptions(ctx, false);
   }
 
   async function handleDepositCryptoSelected(ctx: BotContext, tgId: string, crypto: string) {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
-    const labels: Record<string, string> = {
-      usdt_trc20: "USDT (TRC20)", usdt_erc20: "USDT (ERC20)",
-      btc: "Bitcoin (BTC)", eth: "Ethereum (ETH)", ton: "TON",
-      bnb: "BNB (BSC)", ltc: "Litecoin (LTC)",
-    };
-    const label = addr?.label ?? labels[crypto] ?? crypto.toUpperCase();
+    const label = addr?.label ?? DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
 
     ctx.session.awaitingDepositCrypto = crypto;
 
     const npCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
     const npAvailable = isNowPaymentsEnabled() && !!npCurrency;
 
-    const baseText =
-      `📥 *Deposit — ${label}*\n\n` +
-      `💵 *1 Chip = $1 USD*\n` +
-      (npAvailable ? `⚡ Auto min ≈ *$20* (NOWPayments)\n\n` : `Min: *$5*\n\n`);
-
-    if (npAvailable && addr) {
-      return ctx.editMessageText(
-        baseText + `Choose your deposit method:`,
-        {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "⚡ Auto Deposit (NOWPayments)", callback_data: `deposit_np_${crypto}` }],
-              [{ text: "🏦 Manual (Send to Address)", callback_data: `deposit_manual_${crypto}` }],
-              [{ text: "🔙 Back", callback_data: "menu_deposit" }],
-            ],
-          },
-        },
-      );
-    }
-
     if (npAvailable) {
+      const rows: Array<Array<{ text: string; callback_data: string }>> = [
+        [{ text: "⚡ Auto Deposit (NOWPayments)", callback_data: `deposit_np_${crypto}` }],
+      ];
+      if (addr?.address) {
+        rows.push([{ text: "🏦 Manual (Static Address)", callback_data: `deposit_manual_${crypto}` }]);
+      }
+      rows.push([{ text: "🔙 Back", callback_data: "menu_deposit" }]);
+
       return ctx.editMessageText(
-        baseText + `Pay automatically via NOWPayments:`,
-        {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "⚡ Pay with NOWPayments", callback_data: `deposit_np_${crypto}` }],
-              [{ text: "🔙 Back", callback_data: "menu_deposit" }],
-            ],
-          },
-        },
+        `📥 *Deposit — ${label}*\n\n💵 Min: *$5* | 1 Chip = $1\n\nChoose method:`,
+        { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } },
       );
     }
 
-    if (!addr) {
-      return ctx.answerCbQuery("❌ Address not found", { show_alert: true });
+    if (!addr?.address) {
+      return ctx.answerCbQuery("❌ Address not configured. Enable NOWPayments or set address in Admin.", { show_alert: true });
     }
 
+    // Show static address clearly (HTML avoids Markdown underscore issues)
     return ctx.editMessageText(
-      baseText +
-      `Send funds to this address:\n\`${addr.address}\`\n\n` +
-      `After sending, press *Confirm Deposit* and paste your TX hash.`,
+      `📥 <b>Manual Deposit — ${label}</b>\n\n` +
+        `Network: ${addr.network ?? label}\n` +
+        `Min: <b>$5</b> (5 Chips)\n\n` +
+        `📬 Send to this address:\n<code>${addr.address}</code>\n\n` +
+        `After sending, tap Confirm and paste your TX hash.`,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
             [{ text: "📋 Confirm Deposit", callback_data: "deposit_confirm" }],
@@ -709,16 +697,16 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   async function handleManualDepositAddress(ctx: BotContext, tgId: string, crypto: string) {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
-    if (!addr) return ctx.answerCbQuery("❌ Address not found", { show_alert: true });
+    if (!addr?.address) return ctx.answerCbQuery("❌ Address not found", { show_alert: true });
     ctx.session.awaitingDepositCrypto = crypto;
     return ctx.editMessageText(
-      `📥 *Manual Deposit — ${addr.label}*\n\n` +
-      `Network: ${addr.network ?? addr.label}\n` +
-      `Address:\n\`${addr.address}\`\n\n` +
-      `Rate: 1 ${crypto.toUpperCase()} = ${addr.chipsPerUnit} Chips\n\n` +
-      `Send funds to this address, then press *Confirm Deposit* and paste your TX hash.`,
+      `📥 <b>Manual Deposit — ${addr.label}</b>\n\n` +
+        `Network: ${addr.network ?? addr.label}\n` +
+        `Min: <b>$5</b>\n\n` +
+        `📬 Address:\n<code>${addr.address}</code>\n\n` +
+        `Send funds, then tap Confirm and paste TX hash.`,
       {
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
             [{ text: "📋 Confirm Deposit", callback_data: "deposit_confirm" }],
@@ -729,15 +717,15 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     );
   }
 
-  async function handleNowPaymentsDeposit(ctx: BotContext, tgId: string, crypto: string): Promise<void> {
+  async function handleNowPaymentsDeposit(
+    ctx: BotContext,
+    tgId: string,
+    crypto: string,
+    amountUsd = 5,
+  ): Promise<void> {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
-    const labels: Record<string, string> = {
-      usdt_trc20: "USDT (TRC20)", usdt_erc20: "USDT (ERC20)",
-      btc: "Bitcoin (BTC)", eth: "Ethereum (ETH)", ton: "TON",
-      bnb: "BNB (BSC)", ltc: "Litecoin (LTC)",
-    };
-    const label = addr?.label ?? labels[crypto] ?? crypto.toUpperCase();
+    const label = addr?.label ?? DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
 
     const payCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
     if (!payCurrency) {
@@ -745,46 +733,81 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return;
     }
 
+    const priceUsd = Math.max(5, Math.floor(amountUsd));
     const orderId = `dep-${tgId}-${Date.now()}`;
 
     try {
-      // NOWPayments account min is typically ~$19 — use API min + small buffer
-      const apiMin = await getMinAmountUsd(payCurrency);
-      const priceUsd = Math.max(20, Math.ceil(apiMin + 0.5));
-
-      const payment = await createPayment(
+      const checkout = await createDepositCheckout(
         payCurrency,
         priceUsd,
         orderId,
         `Casino deposit — ${label} — user ${tgId}`,
       );
 
-      const paymentId = String(payment.payment_id);
-      const payAmount = payment.pay_amount ?? priceUsd;
-      const payAddress = payment.pay_address ?? "";
+      if (checkout.mode === "payment") {
+        const payment = checkout.payment;
+        const paymentId = String(payment.payment_id);
+        const payAmount = payment.pay_amount ?? priceUsd;
+        const payAddress = payment.pay_address ?? "";
+
+        const tx = await createAutoDeposit(
+          tgId,
+          crypto,
+          String(payAmount),
+          paymentId,
+          payAddress,
+          orderId,
+        );
+
+        await ctx.editMessageText(
+          `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
+            `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} Chips</b>\n` +
+            `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
+            `📬 Address:\n<code>${payAddress}</code>\n\n` +
+            `Network: ${payment.network ?? addr?.network ?? payCurrency}\n` +
+            `Payment ID: <code>${paymentId}</code>\n` +
+            `Deposit ID: #${tx.id}\n\n` +
+            `✅ Chips credit automatically after confirmation.`,
+          {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
+                [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
+              ],
+            },
+          },
+        );
+        return;
+      }
+
+      // Invoice mode — address is on NOWPayments page (supports $5 when /payment min is higher)
+      const invoice = checkout.invoice;
+      const invoiceId = String(invoice.id);
+      const payUrl = invoice.invoice_url;
 
       const tx = await createAutoDeposit(
         tgId,
         crypto,
-        String(payAmount),
-        paymentId,
-        payAddress,
+        String(priceUsd),
+        `inv-${invoiceId}`,
+        payUrl,
         orderId,
       );
 
       await ctx.editMessageText(
-        `⚡ *NOWPayments Deposit — ${label}*\n\n` +
-        `💵 Amount: *$${priceUsd}* → *${priceUsd} Chips*\n` +
-        `🪙 Send exactly: *${payAmount} ${payCurrency.toUpperCase()}*\n\n` +
-        `📬 Address:\n\`${payAddress}\`\n\n` +
-        `Network: ${payment.network ?? addr?.network ?? payCurrency}\n` +
-        `Payment ID: \`${paymentId}\`\n` +
-        `Deposit ID: #${tx.id}\n\n` +
-        `✅ Chips credit *automatically* after confirmation (usually a few minutes).`,
+        `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
+          `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} Chips</b>\n\n` +
+          `👇 Tap <b>Pay Now</b> — the deposit <b>address</b> will open on NOWPayments.\n` +
+          `Send the exact amount shown there.\n\n` +
+          `Invoice: <code>${invoiceId}</code>\n` +
+          `Deposit ID: #${tx.id}\n\n` +
+          `✅ After payment, chips credit automatically.`,
         {
-          parse_mode: "Markdown",
+          parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
+              [{ text: `💳 Pay $${priceUsd} — Show Address`, url: payUrl }],
               [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
               [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
             ],
@@ -793,11 +816,13 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       );
     } catch (e) {
       await ctx.editMessageText(
-        `❌ NOWPayments payment creation failed.\n\nPlease try manual deposit or contact support.\n\nError: ${String(e)}`,
+        `❌ NOWPayments failed.\n\n${String(e)}\n\nTry again or contact admin.`,
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: "🏦 Use Manual Deposit", callback_data: `deposit_manual_${crypto}` }],
+              ...(addr?.address
+                ? [[{ text: "🏦 Use Manual Deposit", callback_data: `deposit_manual_${crypto}` }]]
+                : []),
               [{ text: "🔙 Back", callback_data: "menu_deposit" }],
             ],
           },
@@ -822,6 +847,22 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return;
     }
 
+    // Invoice checkout — address is on NOWPayments page; status via IPN/poller after pay
+    if (tx.txHash.startsWith("inv-")) {
+      const payUrl = tx.walletAddress;
+      await ctx.answerCbQuery("Open Pay Now to see address. After paying, wait for auto-credit.", { show_alert: true });
+      if (payUrl?.startsWith("http")) {
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [
+            [{ text: "💳 Open Payment / Address", url: payUrl }],
+            [{ text: "🔄 Check Again", callback_data: `deposit_check_${tx.id}` }],
+            [{ text: "🔙 Menu", callback_data: "main_menu" }],
+          ],
+        }).catch(() => {});
+      }
+      return;
+    }
+
     const payment = await getPayment(tx.txHash);
     if (!payment) {
       await ctx.answerCbQuery("Could not fetch payment status. Try again shortly.", { show_alert: true });
@@ -834,8 +875,8 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       try {
         await approveTransaction(tx.id, chips);
         await ctx.editMessageText(
-          `✅ *Payment Confirmed!*\n\n🎰 *${chips} chips* added to your balance.\nDeposit #${tx.id}`,
-          { parse_mode: "Markdown", reply_markup: mainMenu() },
+          `✅ <b>Payment Confirmed!</b>\n\n🎰 <b>${chips} chips</b> added.\nDeposit #${tx.id}`,
+          { parse_mode: "HTML", reply_markup: mainMenu() },
         );
       } catch (e) {
         await ctx.answerCbQuery(`Status: ${payment.payment_status}. ${String(e)}`, { show_alert: true });
