@@ -37,20 +37,12 @@ import {
   waitForUserDice,
 } from "./telegram-dice";
 import { diceGame } from "./games/dice";
-import { coinflipGame } from "./games/coinflip";
-import { rpsGame } from "./games/rps";
 import { footballGame } from "./games/football";
 import { basketballGame } from "./games/basketball";
 import { dartGame } from "./games/dart";
-import { numberGame } from "./games/number";
-import { luckGame } from "./games/luck";
 import { bowlingGame } from "./games/bowling";
 import { spinGame } from "./games/spin";
-import { oddevenGame } from "./games/oddeven";
-import { sumGame } from "./games/sum";
-import { lowrollGame } from "./games/lowroll";
 import { bullseyeGame } from "./games/bullseye";
-import { twinGame } from "./games/twin";
 import { strikeGame } from "./games/strike";
 import { goalGame } from "./games/goal";
 import { hoopGame } from "./games/hoop";
@@ -58,25 +50,21 @@ import { hoopGame } from "./games/hoop";
 /** Public group where chat duels are played. */
 export const CASINO_CHAT_GROUP = "@PabloCasinoChat";
 
+/**
+ * Only Telegram's real animated activity emojis:
+ * 🎲 ⚽ 🏀 🎯 🎳 🎰
+ */
 export const chatGames: ChatGameDefinition[] = [
-  diceGame,
-  coinflipGame,
-  rpsGame,
-  footballGame,
-  basketballGame,
-  dartGame,
-  bowlingGame,
-  spinGame,
-  numberGame,
-  luckGame,
-  oddevenGame,
-  sumGame,
-  lowrollGame,
-  twinGame,
-  bullseyeGame,
-  strikeGame,
-  goalGame,
-  hoopGame,
+  diceGame,       // 🎲
+  footballGame,   // ⚽
+  basketballGame, // 🏀
+  dartGame,       // 🎯
+  bowlingGame,    // 🎳
+  spinGame,       // 🎰
+  goalGame,       // ⚽ goals only
+  hoopGame,       // 🏀 makes only
+  bullseyeGame,   // 🎯 6 = bullseye
+  strikeGame,     // 🎳 6 = strike
 ];
 
 const byCommand = new Map(chatGames.map((g) => [g.command, g]));

@@ -449,7 +449,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     if (data.startsWith("slots_bet_")) return handleSlotsPlay(ctx, tgId, data);
 
-    // ── Dice / Coin Flip → play in group chat duels ──────────────────────
+    // ── Dice → chat duel guide (real 🎲 animation in group) ──────────────
     if (
       data === "game_dice" ||
       data.startsWith("dice_bet_") ||
@@ -460,27 +460,26 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: `💬 Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
-            [{ text: "🔙 Back", callback_data: "menu_games" }],
+            [{ text: `Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
+            [{ text: "Back", callback_data: "menu_games" }],
           ],
         },
       });
     }
-    if (
-      data === "game_coinflip" ||
-      data.startsWith("coinflip_bet_") ||
-      data.startsWith("coin_choice_")
-    ) {
-      const g = chatGames.find((x) => x.id === "coinflip")!;
-      return ctx.editMessageText(gameGuideText(g), {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: `💬 Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
-            [{ text: "🔙 Back", callback_data: "menu_games" }],
-          ],
-        },
+    // House coin flip (text game — Telegram has no coin animation emoji)
+    if (data === "game_coinflip") {
+      return ctx.editMessageText("Coin Flip — Select your bet:", {
+        reply_markup: betMenu("coinflip"),
       });
+    }
+    if (data.startsWith("coinflip_bet_")) {
+      const bet = parseInt(data.replace("coinflip_bet_", ""), 10);
+      return ctx.editMessageText(`Coin Flip — Bet ${bet}\nPick a side:`, {
+        reply_markup: coinChoiceMenu(bet),
+      });
+    }
+    if (data.startsWith("coin_choice_")) {
+      return handleCoinPlay(ctx, tgId, data);
     }
 
     // ── Game: Blackjack ──────────────────────────────────────────────────
@@ -1671,12 +1670,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 function helpText(): string {
   return (
     `🎰 *Casino Bot Help*\n\n` +
-    `*Chat Duels* (group or private):\n` +
-    `/chatgames — list all animated duel games\n` +
-    `/dice 1 — example (real 🎲 throw)\n` +
-    `Also: /bowling /spin /football /basketball /dart\n` +
-    `/coinflip /rps /number /luck /oddeven /sum /twin\n` +
-    `/lowroll /bullseye /strike /goal /hoop\n` +
+    `*Chat Duels* (real Telegram animations only):\n` +
+    `/chatgames — list\n` +
+    `🎲 /dice · ⚽ /football · 🏀 /basketball\n` +
+    `🎯 /dart · 🎳 /bowling · 🎰 /spin\n` +
+    `⚽ /goal · 🏀 /hoop · 🎯 /bullseye · 🎳 /strike\n` +
     `Flow: Mode → First to 1/2/3 → Confirm → Bot/Player\n` +
     `Min bet *1* · Win pays *1.9x* always\n\n` +
     `*Classic house games:*\n` +
