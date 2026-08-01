@@ -8,7 +8,7 @@ import {
   recordGame,
   InsufficientChipsError,
 } from "../db-helpers";
-import { editMsg, playFrames, sleep } from "./animate";
+import { editMsg, sleep } from "./animate";
 import { chatStore } from "./store";
 import {
   modeKeyboard,
@@ -30,7 +30,12 @@ import {
   type ChatMatch,
   type ThrowPlan,
 } from "./types";
-import { botThrowDice, resolveUserDice, waitForUserDice } from "./telegram-dice";
+import {
+  botThrowDice,
+  cancelPendingThrow,
+  resolveUserDice,
+  waitForUserDice,
+} from "./telegram-dice";
 import { diceGame } from "./games/dice";
 import { coinflipGame } from "./games/coinflip";
 import { rpsGame } from "./games/rps";
@@ -67,20 +72,55 @@ function parseBet(raw: string | undefined): number | null {
 function usage(g: ChatGameDefinition): string {
   return (
     `*${g.title}*\n` +
-    `Min *${CHAT_MIN_BET}* · Payout *${CHAT_PAYOUT_MULT}x*\n` +
-    `Use \`/${g.command} <bet>\` — e.g. \`/${g.command} 1\``
+    `Bet min ${CHAT_MIN_BET} · Win ${CHAT_PAYOUT_MULT}x\n` +
+    `\`/${g.command} <bet>\`  e.g. \`/${g.command} 1\``
   );
 }
 
+/** Compact setup / lobby card — edited in place so chat stays clean. */
 function setupText(g: ChatGameDefinition, m: ChatMatch, stage: string): string {
   const mode = m.mode ? MODE_LABELS[m.mode] : "—";
   const race = m.raceTo ? `First to ${m.raceTo}` : "—";
   return (
-    `*${g.title}*\n` +
-    `Host: *${m.host.name}* · Bet: *${m.bet}* · ${CHAT_PAYOUT_MULT}x\n` +
-    `Mode: ${mode} · Race: ${race}\n\n` +
+    `${g.emoji} *${g.title}*\n` +
+    `*${m.host.name}* · Bet *${m.bet}* · ${CHAT_PAYOUT_MULT}x\n` +
+    `${mode} · ${race}\n\n` +
     `${stage}`
   );
+}
+
+/** Live match board (edited). Names always included for busy groups. */
+function boardText(
+  g: ChatGameDefinition,
+  m: ChatMatch,
+  guestName: string,
+  extra = "",
+): string {
+  return (
+    `${g.emoji} *${m.host.name}* vs *${guestName}*\n` +
+    `Bet *${m.bet}* · First to ${m.raceTo} · ${CHAT_PAYOUT_MULT}x\n` +
+    `Score *${m.scoreHost}* — *${m.scoreGuest}*` +
+    (extra ? `\n${extra}` : "")
+  );
+}
+
+async function say(
+  bot: Telegraf<ChatBotContext>,
+  chatId: number,
+  text: string,
+  replyTo?: number,
+): Promise<void> {
+  try {
+    await bot.telegram.sendMessage(chatId, text, {
+      parse_mode: "Markdown",
+      ...(replyTo ? { reply_to_message_id: replyTo } : {}),
+    });
+  } catch {
+    // reply target may be gone — still deliver the text
+    if (replyTo) {
+      await bot.telegram.sendMessage(chatId, text, { parse_mode: "Markdown" }).catch(() => {});
+    }
+  }
 }
 
 async function startSetup(
@@ -150,8 +190,8 @@ async function runMatch(
   const mode = match.mode!;
   const raceTo = match.raceTo!;
   const guestName = match.opponent === "bot" ? "Bot" : match.guest!.name;
+  const boardId = match.messageId;
 
-  // Lock chips
   try {
     await deductChips(match.host.userId, match.bet, "game_loss", `${g.id} chat bet`);
     if (match.opponent === "pvp" && match.guest) {
@@ -160,9 +200,9 @@ async function runMatch(
   } catch (e) {
     const msg =
       e instanceof InsufficientChipsError
-        ? "Not enough chips. Match cancelled."
-        : "Could not lock chips. Match cancelled.";
-    await editMsg(bot.telegram, match.chatId, match.messageId, msg);
+        ? `${g.emoji} Not enough chips — match cancelled.`
+        : `${g.emoji} Could not lock chips — match cancelled.`;
+    await editMsg(bot.telegram, match.chatId, boardId, msg);
     chatStore.delete(match.id);
     return;
   }
@@ -172,14 +212,24 @@ async function runMatch(
   match.scoreGuest = 0;
   match.round = 0;
   chatStore.save(match);
+  await editMsg(
+    bot.telegram,
+    match.chatId,
+    boardId,
+    boardText(g, match, guestName, "_Playing…_"),
+  );
 
-  const scoreLine = () =>
-    `*${g.title}* · Round ${match.round} · First to ${raceTo}\n` +
-    `${match.host.name} ${match.scoreHost} — ${match.scoreGuest} ${guestName}`;
+  let lastRolls = "";
 
   while (match.scoreHost < raceTo && match.scoreGuest < raceTo) {
     match.round += 1;
     chatStore.save(match);
+    await editMsg(
+      bot.telegram,
+      match.chatId,
+      boardId,
+      boardText(g, match, guestName, `Round ${match.round}`),
+    );
 
     let hostDisplay: string;
     let guestDisplay: string;
@@ -189,14 +239,14 @@ async function runMatch(
 
     const plan = g.throwPlan?.(mode);
     if (plan) {
-      // Host / user always throws first, then bot or opponent
+      // User / host first, then bot or opponent
       const hostResult = await collectThrows(
         bot,
         match.chatId,
         match.host,
         false,
         plan,
-        match.opponent === "bot" ? "you" : "named",
+        boardId,
       );
       hostValue = hostResult.value;
       hostDisplay = hostResult.display;
@@ -207,7 +257,7 @@ async function runMatch(
         { userId: match.guest?.userId ?? "bot", name: guestName },
         match.opponent === "bot",
         plan,
-        match.opponent === "bot" ? "me" : "named",
+        boardId,
       );
       guestValue = guestResult.value;
       guestDisplay = guestResult.display;
@@ -216,11 +266,13 @@ async function runMatch(
         hostValue > guestValue ? "host" : hostValue < guestValue ? "guest" : "draw";
     } else {
       const round = g.playRound(mode);
-      const frames = round.narration.map((line) => ({
-        text: `${scoreLine()}\n${line}`,
-        ms: 400,
-      }));
-      await playFrames(bot.telegram, match.chatId, match.messageId, frames);
+      await editMsg(
+        bot.telegram,
+        match.chatId,
+        boardId,
+        boardText(g, match, guestName, "Rolling…"),
+      );
+      await sleep(600);
       hostValue = round.hostValue;
       guestValue = round.guestValue;
       hostDisplay = round.hostDisplay;
@@ -230,27 +282,37 @@ async function runMatch(
 
     if (winner === "host") match.scoreHost += 1;
     else if (winner === "guest") match.scoreGuest += 1;
-
-    const pointLine =
-      winner === "draw"
-        ? "Draw — no point"
-        : winner === "host"
-          ? `Point: *${match.host.name}*`
-          : `Point: *${guestName}*`;
-
-    await bot.telegram.sendMessage(
-      match.chatId,
-      `${scoreLine()}\n` +
-        `${match.host.name}: ${hostDisplay}\n` +
-        `${guestName}: ${guestDisplay}\n` +
-        `${pointLine}`,
-      { parse_mode: "Markdown" },
-    );
     chatStore.save(match);
+
+    const matchOver = match.scoreHost >= raceTo || match.scoreGuest >= raceTo;
+    const rolls =
+      `*${match.host.name}* ${hostDisplay}  ·  *${guestName}* ${guestDisplay}`;
+    lastRolls = rolls;
+
+    if (!matchOver) {
+      // Mid-race only — one short line, reply to board so busy chats stay clear
+      const point =
+        winner === "draw"
+          ? "Draw"
+          : winner === "host"
+            ? `+1 ${match.host.name}`
+            : `+1 ${guestName}`;
+      await say(
+        bot,
+        match.chatId,
+        `${rolls}\n${point} · Score *${match.scoreHost}*—*${match.scoreGuest}*`,
+        boardId,
+      );
+    }
+    await editMsg(
+      bot.telegram,
+      match.chatId,
+      boardId,
+      boardText(g, match, guestName),
+    );
   }
 
   const hostWon = match.scoreHost >= raceTo;
-  const winnerId = hostWon ? match.host.userId : match.guest?.userId ?? "bot";
   const winnerName = hostWon ? match.host.name : guestName;
   const payout = Math.floor(match.bet * CHAT_PAYOUT_MULT * 100) / 100;
 
@@ -288,54 +350,70 @@ async function runMatch(
     });
   }
 
-  const balHost = await getChips(match.host.userId);
-  const final =
-    `*${g.title}* — Match over\n` +
-    `Winner: *${winnerName}* · ${match.scoreHost} — ${match.scoreGuest}` +
-    (winnerId === "bot" ? " (Bot)" : "") +
-    `\nPayout: *${payout}* (${CHAT_PAYOUT_MULT}x)\n` +
-    `Balance: *${balHost.toFixed(0)}* chips`;
+  const moneyLine = hostWon
+    ? `*${winnerName}* wins · *+${payout}* chips`
+    : match.opponent === "bot"
+      ? `*Bot* wins · *${match.host.name}* lost ${match.bet}`
+      : `*${winnerName}* wins · *+${payout}* chips`;
+
+  const finalMsg =
+    `${g.emoji} ${lastRolls}\n` +
+    `${moneyLine}\n` +
+    `Score *${match.scoreHost}* — *${match.scoreGuest}* · Bet ${match.bet}`;
 
   match.status = "finished";
   chatStore.save(match);
+
+  // Fresh result message — board scrolls away fast in busy groups
+  try {
+    await bot.telegram.sendMessage(match.chatId, finalMsg, {
+      parse_mode: "Markdown",
+      reply_to_message_id: boardId,
+      reply_markup: playAgainKeyboard(g.command, match.bet),
+    });
+  } catch {
+    await bot.telegram.sendMessage(match.chatId, finalMsg, {
+      parse_mode: "Markdown",
+      reply_markup: playAgainKeyboard(g.command, match.bet),
+    });
+  }
   await editMsg(
     bot.telegram,
     match.chatId,
-    match.messageId,
-    final,
-    playAgainKeyboard(g.command, match.bet),
+    boardId,
+    boardText(g, match, guestName, hostWon ? `${match.host.name} won` : `${guestName} won`),
   );
   chatStore.delete(match.id);
 }
 
-type TurnStyle = "you" | "me" | "named";
-
+/** Collect throws: humans get one short named prompt; bot just throws (no spam). */
 async function collectThrows(
   bot: Telegraf<ChatBotContext>,
   chatId: number,
   player: { userId: string; name: string },
   isBot: boolean,
   plan: ThrowPlan,
-  turn: TurnStyle,
+  replyTo: number,
 ): Promise<{ value: number; display: string }> {
   const values: number[] = [];
   for (let i = 0; i < plan.throws; i++) {
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
-      await bot.telegram.sendMessage(chatId, `My turn${nLabel}`);
+      // No "my turn" text — the animated emoji is the turn
       values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
     } else {
-      const prompt =
-        turn === "you"
-          ? `Your turn — send ${plan.emoji}${nLabel}`
-          : `${player.name} — your turn, send ${plan.emoji}${nLabel}`;
-      await bot.telegram.sendMessage(chatId, prompt);
+      await say(
+        bot,
+        chatId,
+        `*${player.name}* — send ${plan.emoji}${nLabel}`,
+        replyTo,
+      );
       try {
         const v = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
         values.push(v);
         await sleep(diceAnimMs(plan.emoji));
       } catch {
-        await bot.telegram.sendMessage(chatId, `Timed out — auto ${plan.emoji}`);
+        await say(bot, chatId, `*${player.name}* late — auto ${plan.emoji}`, replyTo);
         values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
       }
     }
@@ -457,9 +535,16 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           await ctx.answerCbQuery("Not your match", { show_alert: true });
           return;
         }
+        cancelPendingThrow(match.chatId, match.host.userId);
+        if (match.guest) cancelPendingThrow(match.chatId, match.guest.userId);
         chatStore.delete(matchId);
         await ctx.answerCbQuery("Cancelled");
-        await editMsg(ctx.telegram, match.chatId, match.messageId, "Match cancelled.");
+        await editMsg(
+          ctx.telegram,
+          match.chatId,
+          match.messageId,
+          `${g.emoji} Cancelled · *${match.host.name}*`,
+        );
         return;
       }
 
@@ -473,12 +558,12 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
         match.status = "pick_race";
         chatStore.save(match);
         await ctx.answerCbQuery(MODE_LABELS[mode]);
-        const hint = g.modeHint?.(mode) ?? "";
+        const hint = g.modeHint?.(mode);
         await editMsg(
           ctx.telegram,
           match.chatId,
           match.messageId,
-          setupText(g, match, `${hint}\n\nHow many points to win?`),
+          setupText(g, match, hint ? `${hint}\n\nFirst to how many?` : "First to how many?"),
           raceKeyboard(matchId),
         );
         return;
@@ -515,7 +600,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           setupText(
             g,
             match,
-            `Confirm?\nWinner gets *${(match.bet * CHAT_PAYOUT_MULT).toFixed(1)}* chips (${CHAT_PAYOUT_MULT}x).`,
+            `Confirm? Winner gets *${(match.bet * CHAT_PAYOUT_MULT).toFixed(1)}* chips.`,
           ),
           confirmKeyboard(matchId),
         );
