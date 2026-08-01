@@ -17,15 +17,11 @@ import {
   getUserById,
 } from "../bot/db-helpers";
 import { logger } from "../lib/logger";
-import { Telegraf } from "telegraf";
+import { notifyCasinoUser, setCasinoBotForNotifications } from "../bot/bot-notify";
+
+export { setCasinoBotForNotifications };
 
 const router = Router();
-
-let casinoBot: Telegraf | null = null;
-
-export function setCasinoBotForNotifications(bot: Telegraf) {
-  casinoBot = bot;
-}
 
 /**
  * Handle a completed NOWPayments payment (from IPN or poller).
@@ -64,23 +60,16 @@ export async function handlePaidPayment(payment: NowPaymentsPayment): Promise<vo
   await approveTransaction(tx.id, chips);
   logger.info({ paymentId, chips, txId: tx.id }, "NOWPayments: deposit approved automatically");
 
-  if (casinoBot) {
-    const user = await getUserById(tx.userId);
-    if (user) {
-      try {
-        await casinoBot.telegram.sendMessage(
-          user.telegramId,
-          `✅ *Payment Received!*\n\n` +
-            `💰 Payment confirmed via NOWPayments\n` +
-            `🎰 *${chips} chips* added to your balance!\n\n` +
-            `Transaction: #${tx.id}\n\n` +
-            `Happy playing! 🎲`,
-          { parse_mode: "Markdown" },
-        );
-      } catch (e) {
-        logger.error({ e, userId: user.telegramId }, "NOWPayments: failed to send notification");
-      }
-    }
+  const user = await getUserById(tx.userId);
+  if (user) {
+    await notifyCasinoUser(
+      user.telegramId,
+      `✅ *Payment Received!*\n\n` +
+        `💰 Payment confirmed via NOWPayments\n` +
+        `🎰 *${chips} chips* added to your balance!\n\n` +
+        `Transaction: #${tx.id}\n\n` +
+        `Happy playing! 🎲`,
+    );
   }
 }
 

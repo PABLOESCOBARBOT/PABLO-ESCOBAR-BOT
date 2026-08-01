@@ -2,9 +2,9 @@ import { Telegraf, session, type Context } from "telegraf";
 import { logger } from "../lib/logger";
 import {
   getUserByTgId,
+  getUserById,
   getStats,
   getAllUsers,
-  getPendingTransactions,
   getPendingDeposits,
   getPendingWithdrawals,
   approveTransaction,
@@ -16,6 +16,7 @@ import {
   getAllDepositAddresses,
   getApprovedWithdrawalsToday,
   getTransactionById,
+  getUserFinanceSummary,
 } from "./db-helpers";
 import {
   adminMenu,
@@ -24,7 +25,9 @@ import {
   adminBonusesMenu,
   adminGamesMenu,
   adminPaymentSettingsMenu,
+  adminUsersMenu,
 } from "./keyboards";
+import { notifyCasinoUser } from "./bot-notify";
 
 const CRYPTO_OPTIONS = [
   { key: "usdt_trc20", label: "USDT (TRC20)", network: "Tron (TRC20)" },
@@ -56,6 +59,58 @@ function isAdmin(tgId: string): boolean {
   return parseAdminIds().includes(tgId);
 }
 
+async function buildUserDetail(telegramId: string): Promise<{
+  text: string;
+  keyboard: Array<Array<{ text: string; callback_data: string }>>;
+} | null> {
+  const user = await getUserByTgId(telegramId);
+  if (!user) return null;
+  const fin = await getUserFinanceSummary(telegramId);
+  const name = user.username ? `@${user.username}` : `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "User";
+
+  let recent = "";
+  if (fin?.recentTx.length) {
+    recent = "\n📜 *Recent TX:*\n";
+    for (const t of fin.recentTx.slice(0, 5)) {
+      const emoji =
+        t.status === "approved" ? "✅" : t.status === "pending" ? "⏳" : "❌";
+      recent += `${emoji} #${t.id} ${t.type} ${parseFloat(t.amount).toFixed(0)} (${t.status})\n`;
+    }
+  }
+
+  const text =
+    `👤 *User Details*\n\n` +
+    `Name: ${name}\n` +
+    `TG ID: \`${user.telegramId}\`\n` +
+    `Balance: *${parseFloat(user.chips).toFixed(0)} Chips*\n` +
+    `Status: ${user.isBanned ? "🚫 Banned" : "✅ Active"}\n` +
+    `Joined: ${user.createdAt.toLocaleDateString()}\n\n` +
+    `📥 Total Deposited: *${(fin?.totalDeposited ?? 0).toFixed(0)}*\n` +
+    `📤 Total Withdrawn: *${(fin?.totalWithdrawn ?? 0).toFixed(0)}*\n` +
+    `⏳ Pending Deposits: ${fin?.pendingDeposits ?? 0}\n` +
+    `⏳ Pending Withdrawals: ${fin?.pendingWithdrawals ?? 0}\n` +
+    `🎁 Admin Credits: ${(fin?.adminCredits ?? 0).toFixed(0)}\n` +
+    `➖ Admin Debits: ${(fin?.adminDebits ?? 0).toFixed(0)}\n` +
+    `🎮 Games Played: ${fin?.gamesPlayed ?? 0}` +
+    recent;
+
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [
+    [
+      { text: "➕ Credit", callback_data: `admin_credit_${user.telegramId}` },
+      { text: "➖ Debit", callback_data: `admin_debit_${user.telegramId}` },
+    ],
+    user.isBanned
+      ? [{ text: "✅ Unban", callback_data: `admin_unban_${user.telegramId}` }]
+      : [{ text: "🚫 Ban", callback_data: `admin_ban_confirm_${user.telegramId}` }],
+    [
+      { text: "🔄 Refresh", callback_data: `admin_user_${user.telegramId}` },
+      { text: "🔙 Users", callback_data: "admin_users" },
+    ],
+  ];
+
+  return { text, keyboard };
+}
+
 export function createAdminBot(token: string): Telegraf<AdminCtx> {
   const bot = new Telegraf<AdminCtx>(token);
   bot.use(session({ defaultSession: () => ({} as AdminSession) }));
@@ -77,8 +132,14 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   // ── /start ────────────────────────────────────────────────────────────────
   bot.start(async (ctx) => {
     ctx.session.step = undefined;
+    const pendingDep = await getPendingDeposits();
+    const pendingWd = await getPendingWithdrawals();
     await ctx.reply(
-      `🛠 *Casino Admin Panel*\n\nWelcome, ${ctx.from!.first_name}!\n\nChoose a section to manage:`,
+      `🛠 *Casino Admin Panel*\n\n` +
+        `Welcome, ${ctx.from!.first_name}!\n\n` +
+        `⏳ Pending deposits: *${pendingDep.length}*\n` +
+        `⏳ Pending withdrawals: *${pendingWd.length}*\n\n` +
+        `Choose a section:`,
       { parse_mode: "Markdown", reply_markup: adminMenu() },
     );
   });
@@ -113,10 +174,20 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       return;
     }
 
+    // ── 👥 USERS SECTION ───────────────────────────────────────────────────
+    if (data === "admin_users") {
+      await ctx.editMessageText(
+        "👥 *User Management*\n\nView details, deposits, credit/debit chips, ban users.",
+        { parse_mode: "Markdown", reply_markup: adminUsersMenu() },
+      );
+      return;
+    }
+
     // ── 💰 DEPOSIT SECTION ─────────────────────────────────────────────────
     if (data === "admin_deposit") {
+      const pending = await getPendingDeposits();
       await ctx.editMessageText(
-        "💰 *Deposit Management*\n\nManage player deposits and crypto addresses.",
+        `💰 *Deposit Management*\n\n⏳ Pending: *${pending.length}* deposit(s)\n\nApprove deposits or manage crypto / NOWPayments.`,
         { parse_mode: "Markdown", reply_markup: adminDepositMenu() },
       );
       return;
@@ -170,11 +241,17 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       let msg = `💰 *Pending Deposits (${txns.length})*\n\n`;
       const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
       for (const tx of txns.slice(0, 10)) {
+        const user = await getUserById(tx.userId);
+        const uname = user?.username ? `@${user.username}` : user?.telegramId ?? "?";
         msg += `#${tx.id} — ${tx.crypto?.toUpperCase() ?? "N/A"}`;
         if (tx.cryptoAmount) msg += ` — ${tx.cryptoAmount}`;
-        if (tx.txHash) msg += `\n  Hash: \`${tx.txHash.slice(0, 20)}...\``;
-        if (tx.walletAddress) msg += `\n  Addr: \`${tx.walletAddress.slice(0, 20)}...\``;
+        msg += `\n  User: ${uname}`;
+        if (tx.txHash) msg += `\n  Hash: \`${tx.txHash.slice(0, 24)}...\``;
+        if (tx.walletAddress) msg += `\n  Addr: \`${tx.walletAddress.slice(0, 28)}...\``;
         msg += "\n\n";
+        if (user) {
+          keyboard.push([{ text: `👤 ${uname}`, callback_data: `admin_user_${user.telegramId}` }]);
+        }
         keyboard.push([
           { text: `✅ Approve #${tx.id}`, callback_data: `admin_approve_${tx.id}` },
           { text: `❌ Reject #${tx.id}`, callback_data: `admin_reject_${tx.id}` },
@@ -249,15 +326,21 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         });
         return;
       }
-      let msg = `📤 *Pending Withdrawals (${txns.length})*\n\n`;
+      let msg = `📤 *Pending Withdrawals (${txns.length})*\n\nSend crypto, then tap *Paid*. Reject refunds chips.\n\n`;
       const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
       for (const tx of txns.slice(0, 10)) {
-        msg += `#${tx.id} — ${parseFloat(tx.amount).toFixed(0)} Chips\n`;
+        const user = await getUserById(tx.userId);
+        const uname = user?.username ? `@${user.username}` : user?.telegramId ?? "?";
+        msg += `#${tx.id} — *${parseFloat(tx.amount).toFixed(0)} Chips*\n`;
+        msg += `  User: ${uname}\n`;
         msg += `  Crypto: ${tx.crypto?.toUpperCase() ?? "N/A"}\n`;
-        if (tx.walletAddress) msg += `  To: \`${tx.walletAddress.slice(0, 20)}...\`\n`;
+        if (tx.walletAddress) msg += `  To: \`${tx.walletAddress}\`\n`;
         msg += "\n";
+        if (user) {
+          keyboard.push([{ text: `👤 ${uname}`, callback_data: `admin_user_${user.telegramId}` }]);
+        }
         keyboard.push([
-          { text: `✅ Done #${tx.id}`, callback_data: `admin_approve_${tx.id}` },
+          { text: `✅ Paid #${tx.id}`, callback_data: `admin_approve_${tx.id}` },
           { text: `❌ Reject #${tx.id}`, callback_data: `admin_reject_${tx.id}` },
         ]);
       }
@@ -310,9 +393,20 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       if (existing.type === "withdrawal") {
         try {
           await approveTransaction(txId, parseFloat(existing.amount));
+          const user = await getUserById(existing.userId);
+          if (user) {
+            await notifyCasinoUser(
+              user.telegramId,
+              `✅ *Withdrawal Approved*\n\n` +
+                `#${txId} — *${parseFloat(existing.amount).toFixed(0)} chips*\n` +
+                `Crypto: ${existing.crypto?.toUpperCase() ?? "N/A"}\n` +
+                `Address: \`${existing.walletAddress ?? ""}\`\n\n` +
+                `Payment has been sent. 🙏`,
+            );
+          }
           await ctx.editMessageText(
-            `✅ Withdrawal #${txId} marked done.\n${parseFloat(existing.amount).toFixed(0)} chips were already deducted from the user.`,
-            { reply_markup: adminMenu() },
+            `✅ Withdrawal #${txId} marked done.\n${parseFloat(existing.amount).toFixed(0)} chips (already deducted).\nUser notified.`,
+            { reply_markup: adminWithdrawalMenu() },
           );
         } catch (e) {
           await ctx.editMessageText(`❌ Error: ${String(e)}`, { reply_markup: adminMenu() });
@@ -323,9 +417,14 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       // Deposits: ask admin how many chips to credit
       sess.pendingTxId = txId;
       sess.step = "approve_chips";
+      const depUser = await getUserById(existing.userId);
       await ctx.editMessageText(
-        `✅ Approving deposit #${txId}\n\nHow many chips to add? (enter number):`,
-        { reply_markup: undefined },
+        `✅ Approving deposit #${txId}\n` +
+          `User: ${depUser?.username ? `@${depUser.username}` : depUser?.telegramId ?? "?"}\n` +
+          `Crypto: ${existing.crypto?.toUpperCase() ?? "N/A"} ${existing.cryptoAmount ?? ""}\n` +
+          `Hash: \`${(existing.txHash ?? "").slice(0, 24)}...\`\n\n` +
+          `How many chips to add? (enter number):`,
+        { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
     }
@@ -333,8 +432,25 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data.startsWith("admin_reject_")) {
       const txId = parseInt(data.replace("admin_reject_", ""), 10);
       try {
-        await rejectTransaction(txId, "Admin ne reject kiya");
-        await ctx.editMessageText(`❌ TX #${txId} rejected.`, {
+        const before = await getTransactionById(txId);
+        await rejectTransaction(txId, "Admin rejected");
+        if (before) {
+          const user = await getUserById(before.userId);
+          if (user) {
+            if (before.type === "withdrawal") {
+              await notifyCasinoUser(
+                user.telegramId,
+                `❌ *Withdrawal Rejected*\n\n#${txId} — ${parseFloat(before.amount).toFixed(0)} chips\nChips have been refunded to your balance.`,
+              );
+            } else if (before.type === "deposit") {
+              await notifyCasinoUser(
+                user.telegramId,
+                `❌ *Deposit Rejected*\n\n#${txId} was rejected by admin.\nContact support if you think this is a mistake.`,
+              );
+            }
+          }
+        }
+        await ctx.editMessageText(`❌ TX #${txId} rejected. User notified.`, {
           reply_markup: adminMenu(),
         });
       } catch (e) {
@@ -419,22 +535,67 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       return;
     }
 
-    if (data === "admin_users") {
-      const users = await getAllUsers(15);
-      let msg = `👥 *Recent Users (${users.length})*\n\n`;
+    if (data === "admin_users_list" || data === "admin_users_from_games") {
+      const users = await getAllUsers(12);
+      let msg = `👥 *Recent Users (${users.length})*\n\nTap a user for full details:\n\n`;
+      const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
       for (const u of users) {
-        const name = u.username ? `@${u.username}` : u.firstName ?? `ID:${u.telegramId}`;
-        msg += `${u.isBanned ? "🚫" : "✅"} ${name} — ${parseFloat(u.chips).toFixed(0)} Chips\n`;
+        const name = u.username ? `@${u.username}` : u.firstName ?? u.telegramId;
+        const fin = await getUserFinanceSummary(u.telegramId);
+        msg += `${u.isBanned ? "🚫" : "✅"} ${name} — bal ${parseFloat(u.chips).toFixed(0)} | dep ${(fin?.totalDeposited ?? 0).toFixed(0)}\n`;
+        keyboard.push([
+          {
+            text: `${u.isBanned ? "🚫" : "👤"} ${name} (${parseFloat(u.chips).toFixed(0)})`,
+            callback_data: `admin_user_${u.telegramId}`,
+          },
+        ]);
       }
+      keyboard.push([
+        { text: "🔍 Find User", callback_data: "admin_find_user" },
+        { text: "🔙 Back", callback_data: "admin_users" },
+      ]);
       await ctx.editMessageText(msg, {
         parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🔍 Find User", callback_data: "admin_find_user" }],
-            [{ text: "🔙 Back", callback_data: "admin_games" }],
-          ],
-        },
+        reply_markup: { inline_keyboard: keyboard },
       });
+      return;
+    }
+
+    if (data.startsWith("admin_user_")) {
+      const uid = data.replace("admin_user_", "");
+      const detail = await buildUserDetail(uid);
+      if (!detail) {
+        await ctx.editMessageText("❌ User not found.", { reply_markup: adminUsersMenu() });
+        return;
+      }
+      await ctx.editMessageText(detail.text, {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: detail.keyboard },
+      });
+      return;
+    }
+
+    if (data.startsWith("admin_credit_")) {
+      const uid = data.replace("admin_credit_", "");
+      sess.pendingUserId = uid;
+      sess.step = "add_chips_amount";
+      const user = await getUserByTgId(uid);
+      await ctx.editMessageText(
+        `➕ *Credit Chips*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many chips to *add*?`,
+        { parse_mode: "Markdown", reply_markup: undefined },
+      );
+      return;
+    }
+
+    if (data.startsWith("admin_debit_")) {
+      const uid = data.replace("admin_debit_", "");
+      sess.pendingUserId = uid;
+      sess.step = "remove_chips_amount";
+      const user = await getUserByTgId(uid);
+      await ctx.editMessageText(
+        `➖ *Debit Chips*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many chips to *remove*?`,
+        { parse_mode: "Markdown", reply_markup: undefined },
+      );
       return;
     }
 
@@ -508,11 +669,15 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         const tx = await approveTransaction(sess.pendingTxId, chips);
         sess.step = undefined;
         delete sess.pendingTxId;
-        const credited = tx.type === "deposit" || tx.type === "admin_credit";
+        const user = await getUserById(tx.userId);
+        if (user && (tx.type === "deposit" || tx.type === "admin_credit")) {
+          await notifyCasinoUser(
+            user.telegramId,
+            `✅ *Deposit Approved!*\n\n#${tx.id}\n🎰 *${chips} chips* credited to your balance.\n\nHappy playing! 🎲`,
+          );
+        }
         await ctx.reply(
-          credited
-            ? `✅ TX #${tx.id} approved!\n${chips} chips added to the user.`
-            : `✅ TX #${tx.id} approved!`,
+          `✅ TX #${tx.id} approved!\n${chips} chips added.\nUser notified.`,
           { reply_markup: adminMenu() },
         );
       } catch (e) {
@@ -543,10 +708,19 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         return;
       }
       await addChips(sess.pendingUserId, amount, "admin_credit", `Admin added ${amount} chips`);
+      const creditedId = sess.pendingUserId;
       sess.step = undefined;
       delete sess.pendingUserId;
-      await ctx.reply(`✅ ${amount} chips added successfully!`, {
-        reply_markup: adminMenu(),
+      await notifyCasinoUser(
+        creditedId,
+        `🎁 *Chips Credited!*\n\nAdmin added *${amount} chips* to your balance.`,
+      );
+      const detail = await buildUserDetail(creditedId);
+      await ctx.reply(`✅ ${amount} chips credited. User notified.`, {
+        parse_mode: "Markdown",
+        reply_markup: detail
+          ? { inline_keyboard: detail.keyboard }
+          : adminUsersMenu(),
       });
       return;
     }
@@ -572,11 +746,25 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         await ctx.reply("❌ Please enter a valid number.");
         return;
       }
-      await deductChips(sess.pendingUserId, amount, "admin_debit", `Admin removed ${amount} chips`);
+      try {
+        await deductChips(sess.pendingUserId, amount, "admin_debit", `Admin removed ${amount} chips`);
+      } catch (e) {
+        await ctx.reply(`❌ ${String(e)}`);
+        return;
+      }
+      const debitedId = sess.pendingUserId;
       sess.step = undefined;
       delete sess.pendingUserId;
-      await ctx.reply(`✅ ${amount} chips removed!`, {
-        reply_markup: adminMenu(),
+      await notifyCasinoUser(
+        debitedId,
+        `⚠️ *Chips Debited*\n\nAdmin removed *${amount} chips* from your balance.`,
+      );
+      const detail = await buildUserDetail(debitedId);
+      await ctx.reply(`✅ ${amount} chips debited. User notified.`, {
+        parse_mode: "Markdown",
+        reply_markup: detail
+          ? { inline_keyboard: detail.keyboard }
+          : adminUsersMenu(),
       });
       return;
     }
@@ -584,33 +772,14 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     // ── Find user ───────────────────────────────────────────────────────────
     if (sess.step === "find_user") {
       sess.step = undefined;
-      const user = await getUserByTgId(text);
-      if (!user) {
-        await ctx.reply("❌ User not found.");
+      const detail = await buildUserDetail(text.replace("@", ""));
+      if (!detail) {
+        await ctx.reply("❌ User not found. Use numeric Telegram ID.");
         return;
       }
-      const msg =
-        `👤 *User Info*\n\n` +
-        `ID: ${user.telegramId}\n` +
-        `Name: ${user.firstName ?? ""} ${user.lastName ?? ""}\n` +
-        `Username: ${user.username ? `@${user.username}` : "N/A"}\n` +
-        `Chips: ${parseFloat(user.chips).toFixed(0)}\n` +
-        `Banned: ${user.isBanned ? "Yes 🚫" : "No ✅"}\n` +
-        `Joined: ${user.createdAt.toLocaleDateString()}`;
-      await ctx.reply(msg, {
+      await ctx.reply(detail.text, {
         parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "➕ Add Chips", callback_data: "admin_add_chips" },
-              { text: "➖ Remove Chips", callback_data: "admin_remove_chips" },
-            ],
-            user.isBanned
-              ? [{ text: "✅ Unban", callback_data: `admin_unban_${user.telegramId}` }]
-              : [{ text: "🚫 Ban", callback_data: `admin_ban_confirm_${user.telegramId}` }],
-            [{ text: "🔙 Admin Panel", callback_data: "admin_main" }],
-          ],
-        },
+        reply_markup: { inline_keyboard: detail.keyboard },
       });
       return;
     }

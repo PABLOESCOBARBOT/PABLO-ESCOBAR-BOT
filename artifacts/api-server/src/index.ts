@@ -3,7 +3,8 @@ import { logger } from "./lib/logger";
 import { createCasinoBot } from "./bot/casino-bot";
 import { createAdminBot } from "./bot/admin-bot";
 import { isNowPaymentsEnabled, startPaymentPoller } from "./bot/nowpayments";
-import { setCasinoBotForNotifications, handlePaidPayment } from "./routes/nowpayments-ipn";
+import { handlePaidPayment } from "./routes/nowpayments-ipn";
+import { setCasinoBotForNotifications } from "./bot/bot-notify";
 
 const rawPort = process.env["PORT"];
 

@@ -537,6 +537,63 @@ export async function getAllUsers(limit = 20) {
     .limit(limit);
 }
 
+export interface UserFinanceSummary {
+  totalDeposited: number;
+  totalWithdrawn: number;
+  pendingDeposits: number;
+  pendingWithdrawals: number;
+  adminCredits: number;
+  adminDebits: number;
+  gamesPlayed: number;
+  recentTx: Transaction[];
+}
+
+/** Full money + activity summary for admin user detail view */
+export async function getUserFinanceSummary(telegramId: string): Promise<UserFinanceSummary | null> {
+  const user = await getUserByTgId(telegramId);
+  if (!user) return null;
+
+  const txs = await db
+    .select()
+    .from(transactionsTable)
+    .where(eq(transactionsTable.userId, user.id))
+    .orderBy(desc(transactionsTable.createdAt))
+    .limit(200);
+
+  let totalDeposited = 0;
+  let totalWithdrawn = 0;
+  let pendingDeposits = 0;
+  let pendingWithdrawals = 0;
+  let adminCredits = 0;
+  let adminDebits = 0;
+
+  for (const t of txs) {
+    const amt = parseFloat(t.amount);
+    if (t.type === "deposit" && t.status === "approved") totalDeposited += amt;
+    if (t.type === "deposit" && t.status === "pending") pendingDeposits += 1;
+    if (t.type === "withdrawal" && t.status === "approved") totalWithdrawn += amt;
+    if (t.type === "withdrawal" && t.status === "pending") pendingWithdrawals += 1;
+    if (t.type === "admin_credit" && t.status === "approved") adminCredits += amt;
+    if (t.type === "admin_debit" && t.status === "approved") adminDebits += amt;
+  }
+
+  const [gamesRow] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(gameSessionsTable)
+    .where(eq(gameSessionsTable.userId, user.id));
+
+  return {
+    totalDeposited,
+    totalWithdrawn,
+    pendingDeposits,
+    pendingWithdrawals,
+    adminCredits,
+    adminDebits,
+    gamesPlayed: Number(gamesRow?.count ?? 0),
+    recentTx: txs.slice(0, 8),
+  };
+}
+
 // ─── PvP Helpers ─────────────────────────────────────────────────────────────
 
 export async function createPvpChallenge(

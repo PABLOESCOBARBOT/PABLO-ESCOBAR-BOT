@@ -224,7 +224,7 @@ export function pvpAcceptMenu(challengeId: number): InlineKeyboardMarkup {
 
 // ─── ADMIN BOT KEYBOARDS ──────────────────────────────────────────────────────
 
-/** Main 4-option admin panel */
+/** Main admin panel */
 export function adminMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
@@ -233,9 +233,32 @@ export function adminMenu(): InlineKeyboardMarkup {
         { text: "📤 Withdrawal", callback_data: "admin_withdrawal" },
       ],
       [
+        { text: "👥 Users", callback_data: "admin_users" },
         { text: "🎁 Bonuses", callback_data: "admin_bonuses" },
-        { text: "🎮 Games", callback_data: "admin_games" },
       ],
+      [
+        { text: "🎮 Games / Stats", callback_data: "admin_games" },
+      ],
+    ],
+  };
+}
+
+/** Dedicated users section */
+export function adminUsersMenu(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "📋 Recent Users", callback_data: "admin_users_list" },
+        { text: "🔍 Find User", callback_data: "admin_find_user" },
+      ],
+      [
+        { text: "➕ Credit Chips", callback_data: "admin_add_chips" },
+        { text: "➖ Debit Chips", callback_data: "admin_remove_chips" },
+      ],
+      [
+        { text: "🚫 Ban User", callback_data: "admin_ban_user" },
+      ],
+      [{ text: "🔙 Back", callback_data: "admin_back" }],
     ],
   };
 }
@@ -295,7 +318,7 @@ export function adminGamesMenu(casinoBotUsername?: string): InlineKeyboardMarkup
   }
   rows.push([
     { text: "📊 Casino Stats", callback_data: "admin_stats" },
-    { text: "👥 View Users", callback_data: "admin_users" },
+    { text: "👥 View Users", callback_data: "admin_users_list" },
   ]);
   rows.push([
     { text: "🔍 Find User", callback_data: "admin_find_user" },
