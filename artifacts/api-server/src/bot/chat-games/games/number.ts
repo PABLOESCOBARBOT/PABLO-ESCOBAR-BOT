@@ -4,20 +4,20 @@ import { d } from "../random";
 function roll(mode: ChatGameMode): { value: number; display: string } {
   if (mode === "normal") {
     const n = d(100);
-    return { value: n, display: `🔢 ${n}` };
+    return { value: n, display: `${n}` };
   }
   if (mode === "double") {
     const n = d(100) + d(100);
-    return { value: n, display: `🔢 ${n}` };
+    return { value: n, display: `${n}` };
   }
   if (mode === "crazy") {
     const n = d(100);
     const mult = d(3);
-    return { value: n * mult, display: `🤪 ${n}×${mult}=${n * mult}` };
+    return { value: n * mult, display: `${n}×${mult}=${n * mult}` };
   }
   const n = d(100) + d(100);
   const mult = d(3);
-  return { value: n * mult, display: `🤯 ${n}×${mult}=${n * mult}` };
+  return { value: n * mult, display: `${n}×${mult}=${n * mult}` };
 }
 
 export const numberGame: ChatGameDefinition = {
@@ -39,7 +39,7 @@ export const numberGame: ChatGameDefinition = {
       hostDisplay: host.display,
       guestDisplay: guest.display,
       winner,
-      narration: ["🔢 Generating…", "🔢 ???", "🔢 ?????", "✨ Number locked!"],
+      narration: ["Generating…", "???", "Number locked!"],
     };
   },
 };

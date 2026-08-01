@@ -11,10 +11,10 @@ export const CHAT_MAX_BET = 1_000_000;
 export const CB = "cg";
 
 export const MODE_LABELS: Record<ChatGameMode, string> = {
-  normal: "🎲 Normal Mode",
-  double: "🎲🎲 Double Roll",
-  crazy: "🤪 Crazy Mode",
-  crazy_double: "🤯 Crazy Double Roll",
+  normal: "Normal Mode",
+  double: "Double Roll",
+  crazy: "Crazy Mode",
+  crazy_double: "Crazy Double Roll",
 };
 
 export interface ChatPlayer {

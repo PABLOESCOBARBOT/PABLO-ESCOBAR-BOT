@@ -17,14 +17,14 @@ function roll(mode: ChatGameMode): { value: number; display: string } {
     const b = d(6);
     const sum = a + b;
     const value = sum === 7 ? 77 : sum;
-    return { value, display: sum === 7 ? `🍀 LUCKY 7!` : `${DICE_FACE[a]}${DICE_FACE[b]} = ${sum}` };
+    return { value, display: sum === 7 ? `LUCKY 7!` : `${DICE_FACE[a]}${DICE_FACE[b]} = ${sum}` };
   }
   const rolls = [d(6), d(6), d(6)];
   const sum = rolls.reduce((x, y) => x + y, 0);
   const value = sum === 7 || sum === 21 ? sum * 3 : sum;
   return {
     value,
-    display: rolls.map((r) => DICE_FACE[r]).join("") + ` = ${sum}${value !== sum ? " ✨" : ""}`,
+    display: rolls.map((r) => DICE_FACE[r]).join("") + ` = ${sum}${value !== sum ? " (bonus)" : ""}`,
   };
 }
 
@@ -47,7 +47,7 @@ export const luckGame: ChatGameDefinition = {
       hostDisplay: host.display,
       guestDisplay: guest.display,
       winner,
-      narration: ["🍀 Feeling lucky…", "🎲 …", "🎲🎲 …", "✨ Fortune!"],
+      narration: ["Feeling lucky…", "🎲 …", "Fortune!"],
     };
   },
 };

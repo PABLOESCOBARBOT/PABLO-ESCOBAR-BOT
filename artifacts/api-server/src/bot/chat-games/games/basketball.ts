@@ -9,8 +9,8 @@ function plan(mode: ChatGameMode): ThrowPlan {
     throws,
     combine: (vals) => {
       const sum = vals.reduce((a, b) => a + b, 0);
-      const marks = vals.map((v) => (v >= 4 ? "🟢" : "❌")).join("");
-      return { value: sum, display: `${marks} (${sum})` };
+      const marks = vals.map((v) => (v >= 4 ? "in" : "miss")).join("+");
+      return { value: sum, display: `🏀 ${marks} (${sum})` };
     },
   };
 }

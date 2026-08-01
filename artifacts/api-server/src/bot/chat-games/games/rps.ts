@@ -63,7 +63,7 @@ export const rpsGame: ChatGameDefinition = {
       hostDisplay: host.display,
       guestDisplay: guest.display,
       winner,
-      narration: ["✊ Showdown…", "❓ vs ❓", "❓❓ vs ❓❓", "✨ Reveal!"],
+      narration: ["Showdown…", "vs …", "Reveal!"],
     };
   },
 };
