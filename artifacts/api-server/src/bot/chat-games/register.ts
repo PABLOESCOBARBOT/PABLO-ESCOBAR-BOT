@@ -43,9 +43,6 @@ import { luckGame } from "./games/luck";
 /** Public group where chat duels are played. */
 export const CASINO_CHAT_GROUP = "@PabloCasinoChat";
 
-/** Natural pacing between throws / results. */
-const GAP_MS = 1000;
-
 export const chatGames: ChatGameDefinition[] = [
   diceGame,
   coinflipGame,
@@ -196,7 +193,6 @@ async function runMatch(
       `${scoreHeader()}\n\n🎬 *Round ${match.round} — throw time!*`,
       { parse_mode: "Markdown" },
     );
-    await sleep(GAP_MS);
 
     let hostDisplay: string;
     let guestDisplay: string;
@@ -206,7 +202,7 @@ async function runMatch(
 
     const plan = g.throwPlan?.(mode);
     if (plan) {
-      // Guest / bot throws first with real Telegram emoji
+      // Guest / bot throws first — waits until dice stops, then continues
       const guestResult = await collectThrows(
         bot,
         match.chatId,
@@ -218,9 +214,7 @@ async function runMatch(
       guestValue = guestResult.value;
       guestDisplay = guestResult.display;
 
-      await sleep(GAP_MS);
-
-      // Host (human) throws — must send the emoji themselves
+      // Host throws as soon as bot dice has stopped
       const hostResult = await collectThrows(
         bot,
         match.chatId,
@@ -238,7 +232,7 @@ async function runMatch(
       const round = g.playRound(mode);
       const frames = round.narration.map((line) => ({
         text: `${scoreHeader()}\n\n${line}`,
-        ms: 1000,
+        ms: 400,
       }));
       await playFrames(bot.telegram, match.chatId, match.messageId, frames);
       hostValue = round.hostValue;
@@ -258,9 +252,6 @@ async function runMatch(
           ? `✅ Point to *${match.host.name}*!`
           : `✅ Point to *${guestName}*!`;
 
-    // Pause so last throw animation settles before result
-    await sleep(GAP_MS);
-
     await bot.telegram.sendMessage(
       match.chatId,
       `${scoreHeader()}\n\n` +
@@ -271,7 +262,6 @@ async function runMatch(
       { parse_mode: "Markdown" },
     );
     chatStore.save(match);
-    await sleep(GAP_MS);
   }
 
   const hostWon = match.scoreHost >= raceTo;
@@ -345,7 +335,6 @@ async function collectThrows(
 ): Promise<{ value: number; display: string }> {
   const values: number[] = [];
   for (let i = 0; i < plan.throws; i++) {
-    if (i > 0) await sleep(GAP_MS);
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
       await bot.telegram.sendMessage(
@@ -353,9 +342,8 @@ async function collectThrows(
         `${icon} *${player.name}* is throwing ${plan.emoji}${nLabel}…`,
         { parse_mode: "Markdown" },
       );
-      await sleep(GAP_MS);
+      // botThrowDice already waits until the emoji animation stops
       values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
-      await sleep(GAP_MS);
     } else {
       await bot.telegram.sendMessage(
         chatId,
@@ -366,21 +354,22 @@ async function collectThrows(
       try {
         const v = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
         values.push(v);
-        // User's dice animation (~4s) + natural 1s gap
-        await sleep(4000);
-        await sleep(GAP_MS);
+        // Wait only until user's dice animation stops — no extra gap
+        await sleep(diceAnimMs(plan.emoji));
       } catch {
         await bot.telegram.sendMessage(
           chatId,
           `⏳ ${player.name} too slow — auto-throwing ${plan.emoji}…`,
         );
-        await sleep(GAP_MS);
         values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
-        await sleep(GAP_MS);
       }
     }
   }
   return plan.combine(values);
+}
+
+function diceAnimMs(emoji: string): number {
+  return emoji === "🎰" ? 2500 : 4000;
 }
 
 /** Guide text for main casino bot game buttons. */
