@@ -43,6 +43,10 @@ const DEFAULT_DEPOSIT_COINS = [
   { crypto: "bnb", label: "BNB (BSC)" },
   { crypto: "ltc", label: "Litecoin (LTC)" },
 ];
+
+/** Withdrawals are LTC-only. */
+const WITHDRAW_COINS = [{ crypto: "ltc", label: "Litecoin (LTC)" }] as const;
+const WITHDRAW_CRYPTO = "ltc";
 import {
   mainMenu,
   gamesMenu,
@@ -394,6 +398,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     if (data.startsWith("withdraw_custom_")) {
       const crypto = data.replace("withdraw_custom_", "");
+      if (crypto !== WITHDRAW_CRYPTO) {
+        return ctx.answerCbQuery("❌ Withdrawals are LTC only.", { show_alert: true });
+      }
       ctx.session.awaitingWithdrawCrypto = crypto;
       ctx.session.awaitingWithdrawAmount = true;
       const bal = await getChips(tgId);
@@ -950,12 +957,6 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   }
 
   async function showWithdrawOptions(ctx: BotContext, asReply = false) {
-    const addresses = await getDepositAddresses();
-    const options =
-      addresses.length > 0
-        ? addresses.map(a => ({ crypto: a.crypto, label: a.label }))
-        : DEFAULT_DEPOSIT_COINS;
-
     const tgId = String(ctx.from!.id);
     const bal = await getChips(tgId);
     const pending = await countUserPendingWithdrawals(tgId);
@@ -964,10 +965,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       `📤 <b>Withdraw Winnings</b>\n\n` +
       `💰 Balance: <b>${bal.toFixed(0)} Chips</b> ($${bal.toFixed(0)})\n` +
       `⏳ Pending withdrawals: <b>${pending}</b>\n` +
-      `💵 Min withdraw: <b>$5</b>\n\n` +
-      `Select crypto to receive:`;
+      `💵 Min withdraw: <b>$5</b>\n` +
+      `🪙 Payout coin: <b>Litecoin (LTC) only</b>\n\n` +
+      `Tap below to continue:`;
 
-    const markup = withdrawMenu(options);
+    const markup = withdrawMenu([...WITHDRAW_COINS]);
     return asReply
       ? ctx.reply(text, { parse_mode: "HTML", reply_markup: markup })
       : ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: markup });
@@ -978,6 +980,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   }
 
   async function handleWithdrawCryptoSelected(ctx: BotContext, tgId: string, crypto: string) {
+    if (crypto !== WITHDRAW_CRYPTO) {
+      return ctx.answerCbQuery("❌ Withdrawals are LTC only.", { show_alert: true });
+    }
     const chips = await getChips(tgId);
     if (chips < 5) {
       return ctx.answerCbQuery("❌ Minimum withdrawal is $5. Win more chips first!", { show_alert: true });
@@ -1004,6 +1009,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     crypto: string,
     amountStr: string,
   ) {
+    if (crypto !== WITHDRAW_CRYPTO) {
+      return ctx.answerCbQuery("❌ Withdrawals are LTC only.", { show_alert: true });
+    }
     const bal = await getChips(tgId);
     const chips = amountStr === "all" ? Math.floor(bal) : parseInt(amountStr, 10);
     if (!chips || chips < 5) {
@@ -1034,6 +1042,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     if (!crypto || !chips || !address) {
       return ctx.answerCbQuery("❌ Withdrawal session expired. Start again.", { show_alert: true });
+    }
+    if (crypto !== WITHDRAW_CRYPTO) {
+      return ctx.answerCbQuery("❌ Withdrawals are LTC only.", { show_alert: true });
     }
 
     const pending = await countUserPendingWithdrawals(tgId);
