@@ -5,6 +5,7 @@ import { createAdminBot } from "./bot/admin-bot";
 import { isNowPaymentsEnabled, startPaymentPoller } from "./bot/nowpayments";
 import { handlePaidPayment } from "./routes/nowpayments-ipn";
 import { setCasinoBotForNotifications } from "./bot/bot-notify";
+import { getPendingNowPaymentsPaymentIds } from "./bot/db-helpers";
 
 const rawPort = process.env["PORT"];
 
@@ -47,7 +48,7 @@ if (!casinoToken) {
   // ── NOWPayments auto-payment poller ──────────────────────────────────────
   if (isNowPaymentsEnabled()) {
     logger.info("🔔 NOWPayments enabled — starting payment poller (30s interval)");
-    const poller = startPaymentPoller(30_000, handlePaidPayment);
+    const poller = startPaymentPoller(30_000, handlePaidPayment, getPendingNowPaymentsPaymentIds);
 
     process.once("SIGINT", () => clearInterval(poller));
     process.once("SIGTERM", () => clearInterval(poller));

@@ -1,13 +1,12 @@
 /**
  * NOWPayments Gateway Integration
  *
- * Docs: https://nowpayments.io / API: https://api.nowpayments.io/v1
+ * Docs: https://nowpayments.io — API: https://api.nowpayments.io/v1
  *
- * Setup:
- *   1. Create account at https://account.nowpayments.io
- *   2. Settings → API → copy API key → NOWPAYMENTS_API_KEY
- *   3. Settings → Payments → IPN Secret → NOWPAYMENTS_IPN_SECRET
- *   4. Set PUBLIC_BASE_URL to your public HTTPS origin (for IPN callbacks)
+ * Env:
+ *   NOWPAYMENTS_API_KEY
+ *   NOWPAYMENTS_IPN_SECRET
+ *   PUBLIC_BASE_URL (optional — enables IPN callbacks)
  */
 
 import { createHmac } from "node:crypto";
@@ -26,7 +25,25 @@ export const NOWPAYMENTS_CURRENCY_MAP: Record<string, string> = {
   ltc: "ltc",
 };
 
-export const NOWPAYMENTS_ASSETS = Object.values(NOWPAYMENTS_CURRENCY_MAP);
+export interface NowPaymentsPayment {
+  payment_id: number | string;
+  invoice_id?: number | string | null;
+  payment_status: string;
+  pay_address?: string;
+  price_amount: number | string;
+  price_currency: string;
+  pay_amount?: number | string;
+  actually_paid?: number | string;
+  amount_received?: number | string;
+  pay_currency?: string;
+  order_id?: string;
+  order_description?: string;
+  purchase_id?: string | number;
+  network?: string;
+  created_at?: string;
+  updated_at?: string;
+  expiration_estimate_date?: string;
+}
 
 export interface NowPaymentsInvoice {
   id: string | number;
@@ -36,24 +53,6 @@ export interface NowPaymentsInvoice {
   price_amount: string | number;
   price_currency: string;
   pay_currency?: string;
-  created_at?: string;
-}
-
-export interface NowPaymentsPayment {
-  payment_id: number | string;
-  invoice_id?: number | string;
-  payment_status: string;
-  pay_address?: string;
-  price_amount: number | string;
-  price_currency: string;
-  pay_amount?: number | string;
-  actually_paid?: number | string;
-  pay_currency?: string;
-  order_id?: string;
-  order_description?: string;
-  purchase_id?: string | number;
-  created_at?: string;
-  updated_at?: string;
 }
 
 function getApiKey(): string | null {
@@ -104,10 +103,45 @@ async function apiCall<T>(method: string, path: string, body?: Record<string, un
   return json as T;
 }
 
+/** Minimum USD amount required for a pay_currency (NOWPayments account min). */
+export async function getMinAmountUsd(payCurrency: string): Promise<number> {
+  try {
+    const result = await apiCall<{ min_amount: number }>(
+      "GET",
+      `/min-amount?currency_from=usd&currency_to=${encodeURIComponent(payCurrency.toLowerCase())}`,
+    );
+    return Number(result.min_amount) || 20;
+  } catch (e) {
+    logger.warn({ e, payCurrency }, "NOWPayments min-amount failed — using $20 default");
+    return 20;
+  }
+}
+
 /**
- * Create a NOWPayments invoice (hosted checkout URL for Telegram button).
- * priceAmountUsd = chip dollars (1 chip = $1).
+ * Create a crypto payment (address + amount). Works with API key (no JWT).
+ * priceAmountUsd should be >= getMinAmountUsd(payCurrency).
  */
+export async function createPayment(
+  payCurrency: string,
+  priceAmountUsd: number,
+  orderId: string,
+  description?: string,
+): Promise<NowPaymentsPayment> {
+  const payload: Record<string, unknown> = {
+    price_amount: priceAmountUsd,
+    price_currency: "usd",
+    pay_currency: payCurrency.toLowerCase(),
+    order_id: orderId,
+    order_description: description ?? "Casino Deposit",
+  };
+
+  const ipnUrl = getIpnCallbackUrl();
+  if (ipnUrl) payload.ipn_callback_url = ipnUrl;
+
+  return apiCall<NowPaymentsPayment>("POST", "/payment", payload);
+}
+
+/** Hosted invoice checkout (optional; IPN recommended). */
 export async function createInvoice(
   payCurrency: string,
   priceAmountUsd: number,
@@ -128,28 +162,13 @@ export async function createInvoice(
   return apiCall<NowPaymentsInvoice>("POST", "/invoice", payload);
 }
 
-/** Get a single payment by id */
+/** Get a single payment by id (API key works). */
 export async function getPayment(paymentId: string | number): Promise<NowPaymentsPayment | null> {
   try {
     return await apiCall<NowPaymentsPayment>("GET", `/payment/${paymentId}`);
   } catch (e) {
     logger.warn({ e, paymentId }, "NOWPayments getPayment failed");
     return null;
-  }
-}
-
-/** List recent payments (polling fallback when IPN URL is unavailable) */
-export async function listRecentPayments(limit = 50): Promise<NowPaymentsPayment[]> {
-  try {
-    const result = await apiCall<{ data?: NowPaymentsPayment[] } | NowPaymentsPayment[]>(
-      "GET",
-      `/payment/?limit=${limit}&orderBy=desc`,
-    );
-    if (Array.isArray(result)) return result;
-    return result.data ?? [];
-  } catch (e) {
-    logger.error({ e }, "NOWPayments listRecentPayments failed");
-    return [];
   }
 }
 
@@ -187,24 +206,26 @@ function sortObject(value: unknown): unknown {
 
 export function isPaymentComplete(status: string): boolean {
   const s = status.toLowerCase();
-  // finished = fully done; confirmed is often enough to credit
   return s === "finished" || s === "confirmed";
 }
 
 /**
- * Poll recent payments and invoke onPaid for newly completed ones.
- * Dedup is handled by approveTransaction pending-status guard.
+ * Poll pending deposits by payment_id (stored in txHash).
+ * List endpoint requires JWT — we avoid it and check each pending payment id.
  */
 export function startPaymentPoller(
   intervalMs: number,
   onPaid: (payment: NowPaymentsPayment) => Promise<void>,
+  listPendingPaymentIds: () => Promise<string[]>,
 ): NodeJS.Timeout {
   const poll = async () => {
     try {
-      const payments = await listRecentPayments(50);
-      for (const p of payments) {
-        if (!isPaymentComplete(p.payment_status)) continue;
-        await onPaid(p).catch((e) => logger.error({ e, p }, "NOWPayments onPaid error"));
+      const ids = await listPendingPaymentIds();
+      for (const id of ids) {
+        const payment = await getPayment(id);
+        if (!payment) continue;
+        if (!isPaymentComplete(payment.payment_status)) continue;
+        await onPaid(payment).catch((e) => logger.error({ e, payment }, "NOWPayments onPaid error"));
       }
     } catch (e) {
       logger.error({ e }, "NOWPayments polling error");

@@ -258,6 +258,25 @@ export async function findDepositByInvoiceId(invoiceId: string): Promise<Transac
   return rows[0] ?? null;
 }
 
+/** Pending NOWPayments deposits — txHash holds payment_id */
+export async function getPendingNowPaymentsPaymentIds(): Promise<string[]> {
+  const rows = await db
+    .select({ txHash: transactionsTable.txHash, note: transactionsTable.note })
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.type, "deposit"),
+        eq(transactionsTable.status, "pending"),
+      ),
+    )
+    .limit(100);
+
+  return rows
+    .filter((r) => r.note?.startsWith("NOWPayments order ") && r.txHash)
+    .map((r) => r.txHash!)
+    .filter((id) => /^\d+$/.test(id));
+}
+
 /** Find a pending deposit by NOWPayments order_id stored in note: "NOWPayments order <id>" */
 export async function findDepositByOrderId(orderId: string): Promise<Transaction | null> {
   // Prefer matching note; also support order_id == deposit-<txId>
