@@ -77,8 +77,9 @@ export async function botThrowDice(
 ): Promise<number> {
   const msg = await telegram.sendDice(chatId, { emoji });
   const value = msg.dice?.value;
-  // Let Telegram client finish the animation
+  // Wait for Telegram animation, then a natural 1s beat
   await sleep(emoji === "🎰" ? 2500 : 4000);
+  await sleep(1000);
   if (typeof value !== "number") throw new Error("dice value missing");
   return value;
 }
