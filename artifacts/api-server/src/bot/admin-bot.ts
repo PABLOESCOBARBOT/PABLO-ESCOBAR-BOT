@@ -153,6 +153,46 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     });
   });
 
+  // Shortcut commands (shown in Telegram Menu button)
+  bot.command("deposits", async (ctx) => {
+    ctx.session.step = undefined;
+    const pending = await getPendingDeposits();
+    await ctx.reply(
+      `💰 *Deposit Management*\n\n⏳ Pending: *${pending.length}*`,
+      { parse_mode: "Markdown", reply_markup: adminDepositMenu() },
+    );
+  });
+
+  bot.command("withdrawals", async (ctx) => {
+    ctx.session.step = undefined;
+    const pending = await getPendingWithdrawals();
+    await ctx.reply(
+      `📤 *Withdrawal Management*\n\n⏳ Pending: *${pending.length}*`,
+      { parse_mode: "Markdown", reply_markup: adminWithdrawalMenu() },
+    );
+  });
+
+  bot.command("users", async (ctx) => {
+    ctx.session.step = undefined;
+    await ctx.reply(
+      "👥 *User Management*\n\nView details, credit/debit, ban users.",
+      { parse_mode: "Markdown", reply_markup: adminUsersMenu() },
+    );
+  });
+
+  bot.command("stats", async (ctx) => {
+    ctx.session.step = undefined;
+    const stats = await getStats();
+    await ctx.reply(
+      `📊 *Casino Stats*\n\n` +
+        `👥 Users: ${stats.totalUsers}\n` +
+        `💰 Chips: ${stats.totalChips.toFixed(0)}\n` +
+        `🎮 Games: ${stats.totalGames}\n` +
+        `⏳ Pending TX: ${stats.pendingTx}`,
+      { parse_mode: "Markdown", reply_markup: adminMenu() },
+    );
+  });
+
   // ── Callback queries ──────────────────────────────────────────────────────
   bot.on("callback_query", async (ctx): Promise<void> => {
     const data = (ctx.callbackQuery as { data?: string }).data;

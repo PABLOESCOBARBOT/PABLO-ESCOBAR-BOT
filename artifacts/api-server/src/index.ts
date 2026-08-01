@@ -39,6 +39,26 @@ if (!casinoToken) {
 
   setCasinoBotForNotifications(casinoBot);
 
+  // Bottom-left Telegram "Menu" button — all player commands
+  casinoBot.telegram
+    .setMyCommands([
+      { command: "start", description: "🏠 Main menu / Open casino" },
+      { command: "games", description: "🎮 Play games" },
+      { command: "balance", description: "💰 Check chip balance" },
+      { command: "deposit", description: "📥 Deposit chips" },
+      { command: "withdraw", description: "📤 Withdraw winnings" },
+      { command: "slots", description: "🎰 Play Slots" },
+      { command: "dice", description: "🎲 Play Dice" },
+      { command: "coinflip", description: "🪙 Play Coin Flip" },
+      { command: "blackjack", description: "🃏 Play Blackjack" },
+      { command: "roulette", description: "🎡 Play Roulette" },
+      { command: "crash", description: "📈 Play Crash" },
+      { command: "plinko", description: "🏓 Play Plinko" },
+      { command: "help", description: "ℹ️ Help & how to play" },
+    ])
+    .then(() => logger.info("📋 Casino bot Menu commands set"))
+    .catch((err) => logger.warn({ err }, "Failed to set casino bot commands"));
+
   // Telegraf's launch() promise resolves only when the bot stops — log start immediately
   casinoBot.launch({ dropPendingUpdates: true }).catch((err) => {
     logger.error({ err }, "Failed to start Casino Bot");
@@ -66,6 +86,20 @@ if (!adminToken) {
 } else {
   const adminBot = createAdminBot(adminToken);
   setAdminBotForNotifications(adminBot);
+
+  // Bottom-left Telegram "Menu" button — admin commands
+  adminBot.telegram
+    .setMyCommands([
+      { command: "start", description: "🛠 Open admin panel" },
+      { command: "menu", description: "📋 Admin menu" },
+      { command: "deposits", description: "💰 Pending deposits" },
+      { command: "withdrawals", description: "📤 Pending withdrawals" },
+      { command: "users", description: "👥 User management" },
+      { command: "stats", description: "📊 Casino stats" },
+    ])
+    .then(() => logger.info("📋 Admin bot Menu commands set"))
+    .catch((err) => logger.warn({ err }, "Failed to set admin bot commands"));
+
   adminBot.launch({ dropPendingUpdates: true }).catch((err) => {
     logger.error({ err }, "Failed to start Admin Bot");
   });
