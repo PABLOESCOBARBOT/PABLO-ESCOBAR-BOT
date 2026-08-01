@@ -1,6 +1,7 @@
 import type { Telegram } from "telegraf";
 import { sleep } from "./animate";
 
+/** All Telegram animated dice / activity emojis we support in chat duels. */
 export type TgDiceEmoji = "🎲" | "🎯" | "🏀" | "⚽" | "🎳" | "🎰";
 
 type Pending = {

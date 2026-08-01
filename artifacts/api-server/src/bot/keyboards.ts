@@ -48,16 +48,44 @@ export function mainMenu(): InlineKeyboardMarkup {
 export function gamesMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [{ text: "🎲 Dice", callback_data: "guide_dice" }],
-      [{ text: "🪙 Coin Flip", callback_data: "guide_coinflip" }],
-      [{ text: "✊ Rock Paper Scissors", callback_data: "guide_rps" }],
-      [{ text: "⚽ Football", callback_data: "guide_football" }],
-      [{ text: "🏀 Basketball", callback_data: "guide_basketball" }],
-      [{ text: "🎯 Dart", callback_data: "guide_dart" }],
-      [{ text: "🔢 Number", callback_data: "guide_number" }],
-      [{ text: "🍀 Luck", callback_data: "guide_luck" }],
       [
-        { text: "🎰 Slots", callback_data: "game_slots" },
+        { text: "🎲 Dice", callback_data: "guide_dice" },
+        { text: "🪙 Coin Flip", callback_data: "guide_coinflip" },
+      ],
+      [
+        { text: "✊ RPS", callback_data: "guide_rps" },
+        { text: "🎳 Bowling", callback_data: "guide_bowling" },
+      ],
+      [
+        { text: "⚽ Football", callback_data: "guide_football" },
+        { text: "🏀 Basketball", callback_data: "guide_basketball" },
+      ],
+      [
+        { text: "🎯 Dart", callback_data: "guide_dart" },
+        { text: "🎰 Spin", callback_data: "guide_spin" },
+      ],
+      [
+        { text: "🔢 Number", callback_data: "guide_number" },
+        { text: "🍀 Luck", callback_data: "guide_luck" },
+      ],
+      [
+        { text: "🎲 Odd/Even", callback_data: "guide_oddeven" },
+        { text: "🎲 Sum", callback_data: "guide_sum" },
+      ],
+      [
+        { text: "🎲 Low Roll", callback_data: "guide_lowroll" },
+        { text: "🎲 Twin", callback_data: "guide_twin" },
+      ],
+      [
+        { text: "🎯 Bullseye", callback_data: "guide_bullseye" },
+        { text: "🎳 Strike", callback_data: "guide_strike" },
+      ],
+      [
+        { text: "⚽ Goal", callback_data: "guide_goal" },
+        { text: "🏀 Hoop", callback_data: "guide_hoop" },
+      ],
+      [
+        { text: "🎰 House Slots", callback_data: "game_slots" },
         { text: "🃏 Blackjack", callback_data: "game_blackjack" },
       ],
       [

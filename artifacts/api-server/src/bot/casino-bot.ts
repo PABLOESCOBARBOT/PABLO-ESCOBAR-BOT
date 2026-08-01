@@ -241,7 +241,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   });
 
   // ─── Chat duel games: /dice 1 → mode → race → confirm → bot|player ─────
-  // (dice, coinflip, rps, football, basketball, dart, number, luck)
+  // All use real Telegram animated throws (🎲⚽🏀🎯🎳🎰)
   registerChatGames(bot);
 
   // ─── Classic house games (menu / remaining slash commands) ─────────────
@@ -1672,10 +1672,11 @@ function helpText(): string {
   return (
     `🎰 *Casino Bot Help*\n\n` +
     `*Chat Duels* (group or private):\n` +
-    `/chatgames — list all duel games\n` +
-    `/dice 1 — dice duel (example)\n` +
-    `/coinflip /rps /football /basketball\n` +
-    `/dart /number /luck\n` +
+    `/chatgames — list all animated duel games\n` +
+    `/dice 1 — example (real 🎲 throw)\n` +
+    `Also: /bowling /spin /football /basketball /dart\n` +
+    `/coinflip /rps /number /luck /oddeven /sum /twin\n` +
+    `/lowroll /bullseye /strike /goal /hoop\n` +
     `Flow: Mode → First to 1/2/3 → Confirm → Bot/Player\n` +
     `Min bet *1* · Win pays *1.9x* always\n\n` +
     `*Classic house games:*\n` +

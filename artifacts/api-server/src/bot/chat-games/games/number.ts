@@ -1,23 +1,23 @@
-import type { ChatGameDefinition, ChatGameMode, RoundResult } from "../types";
-import { d } from "../random";
+import type { ChatGameDefinition, ChatGameMode, RoundResult, ThrowPlan } from "../types";
+import { crazyMult, playFromPlan } from "./_helpers";
 
-function roll(mode: ChatGameMode): { value: number; display: string } {
-  if (mode === "normal") {
-    const n = d(100);
-    return { value: n, display: `${n}` };
-  }
-  if (mode === "double") {
-    const n = d(100) + d(100);
-    return { value: n, display: `${n}` };
-  }
-  if (mode === "crazy") {
-    const n = d(100);
-    const mult = d(3);
-    return { value: n * mult, display: `${n}×${mult}=${n * mult}` };
-  }
-  const n = d(100) + d(100);
-  const mult = d(3);
-  return { value: n * mult, display: `${n}×${mult}=${n * mult}` };
+/** Two real 🎲 → number like 35 (first×10 + second). */
+function plan(mode: ChatGameMode): ThrowPlan {
+  const mult = crazyMult(mode);
+  return {
+    emoji: "🎲",
+    throws: 2,
+    combine: (vals) => {
+      const a = vals[0]!;
+      const b = vals[1]!;
+      const n = a * 10 + b;
+      const value = n * mult;
+      return {
+        value,
+        display: mult > 1 ? `🔢 ${a}${b}×${mult}=${value}` : `🔢 ${a}${b}`,
+      };
+    },
+  };
 }
 
 export const numberGame: ChatGameDefinition = {
@@ -26,20 +26,13 @@ export const numberGame: ChatGameDefinition = {
   title: "Number War",
   emoji: "🔢",
   guideTitle: "Play Number Games",
-  description: "Random numbers — higher wins the point",
+  description: "Two real dice make your number (11–66)",
+  modeHint(mode) {
+    if (mode === "crazy" || mode === "crazy_double") return "Two 🎲 → number × multiplier.";
+    return "Two 🎲 make a number 11–66. Higher wins.";
+  },
+  throwPlan: plan,
   playRound(mode): RoundResult {
-    const host = roll(mode);
-    const guest = roll(mode);
-    let winner: "host" | "guest" | "draw" = "draw";
-    if (host.value > guest.value) winner = "host";
-    else if (host.value < guest.value) winner = "guest";
-    return {
-      hostValue: host.value,
-      guestValue: guest.value,
-      hostDisplay: host.display,
-      guestDisplay: guest.display,
-      winner,
-      narration: ["Generating…", "???", "Number locked!"],
-    };
+    return playFromPlan(plan(mode));
   },
 };

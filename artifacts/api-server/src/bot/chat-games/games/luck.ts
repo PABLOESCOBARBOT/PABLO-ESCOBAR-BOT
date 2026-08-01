@@ -1,30 +1,31 @@
-import type { ChatGameDefinition, ChatGameMode, RoundResult } from "../types";
-import { d, DICE_FACE } from "../random";
+import type { ChatGameDefinition, ChatGameMode, RoundResult, ThrowPlan } from "../types";
+import { playFromPlan } from "./_helpers";
 
-function roll(mode: ChatGameMode): { value: number; display: string } {
-  if (mode === "normal") {
-    const r = d(6);
-    return { value: r, display: `${DICE_FACE[r]} ${r}` };
-  }
-  if (mode === "double") {
-    const a = d(6);
-    const b = d(6);
-    return { value: a + b, display: `${DICE_FACE[a]}${DICE_FACE[b]} = ${a + b}` };
-  }
-  if (mode === "crazy") {
-    // Lucky 7 special
-    const a = d(6);
-    const b = d(6);
-    const sum = a + b;
-    const value = sum === 7 ? 77 : sum;
-    return { value, display: sum === 7 ? `LUCKY 7!` : `${DICE_FACE[a]}${DICE_FACE[b]} = ${sum}` };
-  }
-  const rolls = [d(6), d(6), d(6)];
-  const sum = rolls.reduce((x, y) => x + y, 0);
-  const value = sum === 7 || sum === 21 ? sum * 3 : sum;
+/** Real dice — lucky totals get a bonus. */
+function plan(mode: ChatGameMode): ThrowPlan {
+  const throws = mode === "normal" || mode === "crazy" ? 2 : 3;
   return {
-    value,
-    display: rolls.map((r) => DICE_FACE[r]).join("") + ` = ${sum}${value !== sum ? " (bonus)" : ""}`,
+    emoji: "🎲",
+    throws,
+    combine: (vals) => {
+      const sum = vals.reduce((a, b) => a + b, 0);
+      let value = sum;
+      let tag = "";
+      if (sum === 7) {
+        value = 77;
+        tag = " LUCKY7";
+      } else if (sum === 21) {
+        value = 63;
+        tag = " LUCKY21";
+      } else if (mode === "crazy" || mode === "crazy_double") {
+        value = sum * 2;
+        tag = "×2";
+      }
+      return {
+        value,
+        display: `🍀 ${vals.join("+")}=${sum}${tag}`,
+      };
+    },
   };
 }
 
@@ -34,20 +35,15 @@ export const luckGame: ChatGameDefinition = {
   title: "Lucky Roll",
   emoji: "🍀",
   guideTitle: "Play Luck Games",
-  description: "Lucky rolls — higher (or lucky 7) wins",
+  description: "Real dice — lucky 7 / 21 hit big",
+  modeHint(mode) {
+    if (mode === "normal") return "Two 🎲 — hit 7 for lucky bonus.";
+    if (mode === "double") return "Three 🎲 — 7 or 21 are lucky.";
+    if (mode === "crazy") return "Two 🎲 — lucky 7 or all scores ×2.";
+    return "Three 🎲 — lucky 7/21 or ×2.";
+  },
+  throwPlan: plan,
   playRound(mode): RoundResult {
-    const host = roll(mode);
-    const guest = roll(mode);
-    let winner: "host" | "guest" | "draw" = "draw";
-    if (host.value > guest.value) winner = "host";
-    else if (host.value < guest.value) winner = "guest";
-    return {
-      hostValue: host.value,
-      guestValue: guest.value,
-      hostDisplay: host.display,
-      guestDisplay: guest.display,
-      winner,
-      narration: ["Feeling lucky…", "🎲 …", "Fortune!"],
-    };
+    return playFromPlan(plan(mode));
   },
 };

@@ -1,17 +1,8 @@
-import type { ChatGameDefinition, ChatGameMode, RoundResult, ThrowPlan } from "../types";
-import { d } from "../random";
+import type { ChatGameDefinition, ChatGameMode, RoundResult } from "../types";
+import { playFromPlan, sumPlan } from "./_helpers";
 
-/** Telegram 🎯 values 1–6. */
-function plan(mode: ChatGameMode): ThrowPlan {
-  const throws = mode === "double" || mode === "crazy_double" ? 2 : 1;
-  return {
-    emoji: "🎯",
-    throws,
-    combine: (vals) => {
-      const sum = vals.reduce((a, b) => a + b, 0);
-      return { value: sum, display: `🎯 ${vals.join("+")}${vals.length > 1 ? `=${sum}` : ""}` };
-    },
-  };
+function plan(mode: ChatGameMode) {
+  return sumPlan("🎯", mode, "🎯");
 }
 
 export const dartGame: ChatGameDefinition = {
@@ -20,24 +11,15 @@ export const dartGame: ChatGameDefinition = {
   title: "Dart Duel",
   emoji: "🎯",
   guideTitle: "Play Dart Games",
-  description: "Real Telegram dart emoji — highest score wins",
+  description: "Real Telegram dart — highest score wins",
+  modeHint(mode) {
+    if (mode === "normal") return "One real 🎯 each.";
+    if (mode === "double") return "Two 🎯 — highest sum wins.";
+    if (mode === "crazy") return "One 🎯 × multiplier!";
+    return "Two 🎯 × multiplier!";
+  },
   throwPlan: plan,
   playRound(mode): RoundResult {
-    const p = plan(mode);
-    const hostVals = Array.from({ length: p.throws }, () => d(6));
-    const guestVals = Array.from({ length: p.throws }, () => d(6));
-    const host = p.combine(hostVals);
-    const guest = p.combine(guestVals);
-    let winner: "host" | "guest" | "draw" = "draw";
-    if (host.value > guest.value) winner = "host";
-    else if (host.value < guest.value) winner = "guest";
-    return {
-      hostValue: host.value,
-      guestValue: guest.value,
-      hostDisplay: host.display,
-      guestDisplay: guest.display,
-      winner,
-      narration: ["🎯 …"],
-    };
+    return playFromPlan(plan(mode));
   },
 };

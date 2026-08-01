@@ -60,15 +60,22 @@ export interface RoundResult {
   narration: string[];
 }
 
-/** Real Telegram animated emoji throw (🎲 🎯 🏀 ⚽). */
-export type TgThrowEmoji = "🎲" | "🎯" | "🏀" | "⚽";
+/** Real Telegram animated emoji throws. */
+export type TgThrowEmoji = "🎲" | "🎯" | "🏀" | "⚽" | "🎳" | "🎰";
+
+export interface ThrowScore {
+  value: number;
+  display: string;
+}
 
 export interface ThrowPlan {
   emoji: TgThrowEmoji;
   /** How many animated throws per player this round. */
   throws: number;
   /** Combine raw telegram values into score + display. */
-  combine(values: number[]): { value: number; display: string };
+  combine(values: number[]): ThrowScore;
+  /** Optional non-numeric winner (e.g. RPS). Defaults to higher value. */
+  decide?(host: ThrowScore, guest: ThrowScore): "host" | "guest" | "draw";
 }
 
 export interface ChatGameDefinition {
