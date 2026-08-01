@@ -195,6 +195,15 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       );
     }
 
+    // Clear any leftover custom reply-keyboard (the 🎛 icon next to the mic)
+    if (!isGroup(ctx)) {
+      try {
+        await ctx.reply("\u200B", {
+          reply_markup: { remove_keyboard: true },
+        });
+      } catch { /* ignore */ }
+    }
+
     if (ctx.startPayload) {
       return handleStartPayload(ctx, tgId, ctx.startPayload);
     }
