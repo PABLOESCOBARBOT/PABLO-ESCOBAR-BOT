@@ -25,6 +25,7 @@ export const numberGame: ChatGameDefinition = {
   command: "number",
   title: "Number War",
   emoji: "🔢",
+  guideTitle: "Play Number Games",
   description: "Random numbers — higher wins the point",
   playRound(mode): RoundResult {
     const host = roll(mode);

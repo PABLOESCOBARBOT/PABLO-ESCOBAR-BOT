@@ -1,24 +1,18 @@
-import type { ChatGameDefinition, ChatGameMode, RoundResult } from "../types";
+import type { ChatGameDefinition, ChatGameMode, RoundResult, ThrowPlan } from "../types";
 import { d } from "../random";
 
-function shot(mode: ChatGameMode): { value: number; display: string } {
-  // value 1 = goal, 0 = miss; crazy modes can be power scores
-  if (mode === "normal") {
-    const goal = d(100) <= 55;
-    return { value: goal ? 1 : 0, display: goal ? "⚽ GOAL!" : "🧤 SAVED!" };
-  }
-  if (mode === "double") {
-    const g1 = d(100) <= 55;
-    const g2 = d(100) <= 55;
-    const v = (g1 ? 1 : 0) + (g2 ? 1 : 0);
-    return { value: v, display: `${g1 ? "⚽" : "🧤"}${g2 ? "⚽" : "🧤"} (${v})` };
-  }
-  if (mode === "crazy") {
-    const power = d(10);
-    return { value: power, display: `⚡ Power ${power}/10` };
-  }
-  const power = d(10) + d(10);
-  return { value: power, display: `🤯 Power ${power}/20` };
+/** Telegram ⚽ values 1–5; treat higher as better shot. */
+function plan(mode: ChatGameMode): ThrowPlan {
+  const throws = mode === "double" || mode === "crazy_double" ? 2 : 1;
+  return {
+    emoji: "⚽",
+    throws,
+    combine: (vals) => {
+      const sum = vals.reduce((a, b) => a + b, 0);
+      const goalish = vals.map((v) => (v >= 3 ? "⚽" : "🧤")).join("");
+      return { value: sum, display: `${goalish} (${sum})` };
+    },
+  };
 }
 
 export const footballGame: ChatGameDefinition = {
@@ -26,16 +20,15 @@ export const footballGame: ChatGameDefinition = {
   command: "football",
   title: "Football Penalty",
   emoji: "⚽",
-  description: "Penalties — better shot wins the point",
-  modeHint(mode) {
-    if (mode === "normal") return "One penalty shot.";
-    if (mode === "double") return "Two shots — most goals wins.";
-    if (mode === "crazy") return "Power shot 1–10!";
-    return "Double power shot 2–20!";
-  },
+  guideTitle: "Play Football Games",
+  description: "Real Telegram football emoji — better shot wins",
+  throwPlan: plan,
   playRound(mode): RoundResult {
-    const host = shot(mode);
-    const guest = shot(mode);
+    const p = plan(mode);
+    const hostVals = Array.from({ length: p.throws }, () => d(5));
+    const guestVals = Array.from({ length: p.throws }, () => d(5));
+    const host = p.combine(hostVals);
+    const guest = p.combine(guestVals);
     let winner: "host" | "guest" | "draw" = "draw";
     if (host.value > guest.value) winner = "host";
     else if (host.value < guest.value) winner = "guest";
@@ -45,7 +38,7 @@ export const footballGame: ChatGameDefinition = {
       hostDisplay: host.display,
       guestDisplay: guest.display,
       winner,
-      narration: ["⚽ Preparing…", "⚽ → →", "⚽ → → → 🥅", "✨ Result!"],
+      narration: ["⚽ …"],
     };
   },
 };

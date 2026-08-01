@@ -78,7 +78,7 @@ import {
 import { playRoulette, type RouletteBet } from "./games/roulette";
 import { generateCrashPoint, resolveCrash, buildCrashBar } from "./games/crash";
 import { playPlinko } from "./games/plinko";
-import { registerChatGames } from "./chat-games/register";
+import { registerChatGames, chatGames, gameGuideText, CASINO_CHAT_GROUP } from "./chat-games/register";
 
 // ─── Session types ─────────────────────────────────────────────────────────────
 interface SessionData {
@@ -320,28 +320,19 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       });
     }
 
-    if (data === "menu_chatgames") {
-      return ctx.editMessageText(
-        `🎮 *Chat Duels*\n\n` +
-          `Play in this chat vs Bot or another player.\n` +
-          `Min bet *1* · Payout always *1.9x*\n\n` +
-          `Examples:\n` +
-          `\`/dice 1\`\n` +
-          `\`/coinflip 5\`\n` +
-          `\`/rps 10\`\n` +
-          `\`/football 1\`\n` +
-          `\`/basketball 1\`\n` +
-          `\`/dart 1\`\n` +
-          `\`/number 1\`\n` +
-          `\`/luck 1\`\n\n` +
-          `Flow: Mode → First to 1/2/3 → Confirm → Bot or Player`,
-        {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [[{ text: "🔙 Back", callback_data: "menu_games" }]],
-          },
+    if (data.startsWith("guide_")) {
+      const gameId = data.replace("guide_", "");
+      const g = chatGames.find((x) => x.id === gameId);
+      if (!g) return ctx.answerCbQuery("Unknown game");
+      return ctx.editMessageText(gameGuideText(g), {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `💬 Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
+            [{ text: "🔙 Back", callback_data: "menu_games" }],
+          ],
         },
-      );
+      });
     }
 
     if (data === "balance") {
@@ -458,49 +449,39 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     if (data.startsWith("slots_bet_")) return handleSlotsPlay(ctx, tgId, data);
 
-    // ── Game: Dice ───────────────────────────────────────────────────────
-    if (data === "game_dice") {
-      return ctx.editMessageText("🎲 *Dice — Select your bet:*", {
+    // ── Dice / Coin Flip → play in group chat duels ──────────────────────
+    if (
+      data === "game_dice" ||
+      data.startsWith("dice_bet_") ||
+      data.startsWith("dice_choice_")
+    ) {
+      const g = chatGames.find((x) => x.id === "dice")!;
+      return ctx.editMessageText(gameGuideText(g), {
         parse_mode: "Markdown",
-        reply_markup: betMenu("dice"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `💬 Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
+            [{ text: "🔙 Back", callback_data: "menu_games" }],
+          ],
+        },
       });
     }
-    if (data.startsWith("dice_bet_")) {
-      const parts = data.split("_");
-      const betStr = parts[parts.length - 1]!;
-      const chips = await getChips(tgId);
-      const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
-      if (bet <= 0 || chips < bet) {
-        return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
-      }
-      return ctx.editMessageText(
-        `🎲 *Dice — Bet: ${bet} Chips*\n\nWhat do you want to bet on?`,
-        { parse_mode: "Markdown", reply_markup: diceChoiceMenu(bet) },
-      );
-    }
-    if (data.startsWith("dice_choice_")) return handleDicePlay(ctx, tgId, data);
-
-    // ── Game: Coin Flip ──────────────────────────────────────────────────
-    if (data === "game_coinflip") {
-      return ctx.editMessageText("🪙 *Coin Flip — Select your bet:*", {
+    if (
+      data === "game_coinflip" ||
+      data.startsWith("coinflip_bet_") ||
+      data.startsWith("coin_choice_")
+    ) {
+      const g = chatGames.find((x) => x.id === "coinflip")!;
+      return ctx.editMessageText(gameGuideText(g), {
         parse_mode: "Markdown",
-        reply_markup: betMenu("coinflip"),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `💬 Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
+            [{ text: "🔙 Back", callback_data: "menu_games" }],
+          ],
+        },
       });
     }
-    if (data.startsWith("coinflip_bet_")) {
-      const parts = data.split("_");
-      const betStr = parts[parts.length - 1]!;
-      const chips = await getChips(tgId);
-      const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
-      if (bet <= 0 || chips < bet) {
-        return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
-      }
-      return ctx.editMessageText(
-        `🪙 *Coin Flip — Bet: ${bet} Chips*\n\nHeads or Tails?`,
-        { parse_mode: "Markdown", reply_markup: coinChoiceMenu(bet) },
-      );
-    }
-    if (data.startsWith("coin_choice_")) return handleCoinPlay(ctx, tgId, data);
 
     // ── Game: Blackjack ──────────────────────────────────────────────────
     if (data === "game_blackjack") {

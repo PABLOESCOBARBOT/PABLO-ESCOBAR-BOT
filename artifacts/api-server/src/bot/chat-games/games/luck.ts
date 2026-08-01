@@ -33,6 +33,7 @@ export const luckGame: ChatGameDefinition = {
   command: "luck",
   title: "Lucky Roll",
   emoji: "🍀",
+  guideTitle: "Play Luck Games",
   description: "Lucky rolls — higher (or lucky 7) wins",
   playRound(mode): RoundResult {
     const host = roll(mode);

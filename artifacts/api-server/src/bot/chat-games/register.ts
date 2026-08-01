@@ -1,4 +1,5 @@
 import type { Telegraf } from "telegraf";
+import { message } from "telegraf/filters";
 import {
   getOrCreateUser,
   getChips,
@@ -27,7 +28,9 @@ import {
   type ChatGameDefinition,
   type ChatGameMode,
   type ChatMatch,
+  type ThrowPlan,
 } from "./types";
+import { botThrowDice, resolveUserDice, waitForUserDice } from "./telegram-dice";
 import { diceGame } from "./games/dice";
 import { coinflipGame } from "./games/coinflip";
 import { rpsGame } from "./games/rps";
@@ -36,6 +39,9 @@ import { basketballGame } from "./games/basketball";
 import { dartGame } from "./games/dart";
 import { numberGame } from "./games/number";
 import { luckGame } from "./games/luck";
+
+/** Public group where chat duels are played. */
+export const CASINO_CHAT_GROUP = "@PabloCasinoChat";
 
 export const chatGames: ChatGameDefinition[] = [
   diceGame,
@@ -173,43 +179,90 @@ async function runMatch(
   match.round = 0;
   chatStore.save(match);
 
+  const scoreHeader = () =>
+    `${g.emoji} *${g.title}* — Round ${match.round}\n` +
+    `🏁 First to *${raceTo}*\n` +
+    `👤 ${match.host.name} *${match.scoreHost}* — *${match.scoreGuest}* ${guestIcon} ${guestName}\n` +
+    `💰 Bet: ${match.bet} · 🎯 ${CHAT_PAYOUT_MULT}x`;
+
   while (match.scoreHost < raceTo && match.scoreGuest < raceTo) {
     match.round += 1;
-    const round = g.playRound(mode);
-    const header =
-      `${g.emoji} *${g.title}* — Round ${match.round}\n` +
-      `🏁 First to *${raceTo}*\n` +
-      `👤 ${match.host.name} *${match.scoreHost}* — *${match.scoreGuest}* ${guestIcon} ${guestName}\n` +
-      `💰 Bet: ${match.bet} · 🎯 ${CHAT_PAYOUT_MULT}x`;
+    chatStore.save(match);
+    await bot.telegram.sendMessage(
+      match.chatId,
+      `${scoreHeader()}\n\n🎬 *Round ${match.round} — throw time!*`,
+      { parse_mode: "Markdown" },
+    );
 
-    const frames = round.narration.map((line) => ({
-      text: `${header}\n\n${line}`,
-      ms: 320,
-    }));
-    await playFrames(bot.telegram, match.chatId, match.messageId, frames);
+    let hostDisplay: string;
+    let guestDisplay: string;
+    let hostValue: number;
+    let guestValue: number;
+    let winner: "host" | "guest" | "draw";
 
-    if (round.winner === "host") match.scoreHost += 1;
-    else if (round.winner === "guest") match.scoreGuest += 1;
+    const plan = g.throwPlan?.(mode);
+    if (plan) {
+      // Guest / bot throws first with real Telegram emoji
+      const guestResult = await collectThrows(
+        bot,
+        match.chatId,
+        { userId: match.guest?.userId ?? "bot", name: guestName },
+        match.opponent === "bot",
+        plan,
+        guestIcon,
+      );
+      guestValue = guestResult.value;
+      guestDisplay = guestResult.display;
+
+      // Host (human) throws — must send the emoji themselves
+      const hostResult = await collectThrows(
+        bot,
+        match.chatId,
+        match.host,
+        false,
+        plan,
+        "👤",
+      );
+      hostValue = hostResult.value;
+      hostDisplay = hostResult.display;
+
+      winner =
+        hostValue > guestValue ? "host" : hostValue < guestValue ? "guest" : "draw";
+    } else {
+      const round = g.playRound(mode);
+      const frames = round.narration.map((line) => ({
+        text: `${scoreHeader()}\n\n${line}`,
+        ms: 320,
+      }));
+      await playFrames(bot.telegram, match.chatId, match.messageId, frames);
+      hostValue = round.hostValue;
+      guestValue = round.guestValue;
+      hostDisplay = round.hostDisplay;
+      guestDisplay = round.guestDisplay;
+      winner = round.winner;
+    }
+
+    if (winner === "host") match.scoreHost += 1;
+    else if (winner === "guest") match.scoreGuest += 1;
 
     const pointLine =
-      round.winner === "draw"
+      winner === "draw"
         ? "🤝 *Draw — no point*"
-        : round.winner === "host"
+        : winner === "host"
           ? `✅ Point to *${match.host.name}*!`
           : `✅ Point to *${guestName}*!`;
 
-    await editMsg(
-      bot.telegram,
+    await bot.telegram.sendMessage(
       match.chatId,
-      match.messageId,
-      `${header}\n\n` +
-        `👤 ${match.host.name}: ${round.hostDisplay}\n` +
-        `${guestIcon} ${guestName}: ${round.guestDisplay}\n\n` +
+      `${scoreHeader()}\n\n` +
+        `${guestIcon} ${guestName}: ${guestDisplay}\n` +
+        `👤 ${match.host.name}: ${hostDisplay}\n\n` +
         `${pointLine}\n` +
         `📊 Score: *${match.scoreHost}* — *${match.scoreGuest}*`,
+      { parse_mode: "Markdown" },
     );
     chatStore.save(match);
-    await sleep(900);
+    await sleep(800);
   }
 
   const hostWon = match.scoreHost >= raceTo;
@@ -273,11 +326,75 @@ async function runMatch(
   chatStore.delete(match.id);
 }
 
+async function collectThrows(
+  bot: Telegraf<ChatBotContext>,
+  chatId: number,
+  player: { userId: string; name: string },
+  isBot: boolean,
+  plan: ThrowPlan,
+  icon: string,
+): Promise<{ value: number; display: string }> {
+  const values: number[] = [];
+  for (let i = 0; i < plan.throws; i++) {
+    const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
+    if (isBot) {
+      await bot.telegram.sendMessage(
+        chatId,
+        `${icon} *${player.name}* is throwing ${plan.emoji}${nLabel}…`,
+        { parse_mode: "Markdown" },
+      );
+      values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
+    } else {
+      await bot.telegram.sendMessage(
+        chatId,
+        `${icon} *${player.name}* — send ${plan.emoji} now!${nLabel}\n` +
+          `_Dice & Activity → tap ${plan.emoji} and send it_`,
+        { parse_mode: "Markdown" },
+      );
+      try {
+        const v = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
+        values.push(v);
+      } catch {
+        await bot.telegram.sendMessage(
+          chatId,
+          `⏳ ${player.name} too slow — auto-throwing ${plan.emoji}…`,
+        );
+        values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
+      }
+    }
+  }
+  return plan.combine(values);
+}
+
+/** Guide text for main casino bot game buttons. */
+export function gameGuideText(g: ChatGameDefinition): string {
+  return (
+    `*${g.guideTitle}*\n\n` +
+    `If you want to play ${g.title.toLowerCase()} with your friend or the bot, ` +
+    `use the /${g.command} command in our group - ${CASINO_CHAT_GROUP}`
+  );
+}
+
 /**
  * Register chat duel games: /dice 1 → mode → race → confirm → bot|player → animated play.
  * Min bet 1, payout always 1.9x.
  */
 export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
+  // Capture real Telegram dice/activity emoji from players
+  bot.on(message("dice"), async (ctx) => {
+    const dice = ctx.message.dice;
+    const uid = String(ctx.from.id);
+    const chatId = ctx.chat.id;
+    const ok = resolveUserDice(chatId, uid, dice.emoji, dice.value);
+    if (ok) {
+      try {
+        await ctx.reply(`✅ Got ${dice.emoji} *${dice.value}* from ${ctx.from.first_name}!`, {
+          parse_mode: "Markdown",
+        });
+      } catch { /* ignore */ }
+    }
+  });
+
   for (const g of chatGames) {
     bot.command(g.command, async (ctx) => {
       try {

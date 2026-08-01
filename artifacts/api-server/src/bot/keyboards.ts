@@ -48,7 +48,14 @@ export function mainMenu(): InlineKeyboardMarkup {
 export function gamesMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [{ text: "🎮 Chat Duels ( /chatgames )", callback_data: "menu_chatgames" }],
+      [{ text: "🎲 Dice", callback_data: "guide_dice" }],
+      [{ text: "🪙 Coin Flip", callback_data: "guide_coinflip" }],
+      [{ text: "✊ Rock Paper Scissors", callback_data: "guide_rps" }],
+      [{ text: "⚽ Football", callback_data: "guide_football" }],
+      [{ text: "🏀 Basketball", callback_data: "guide_basketball" }],
+      [{ text: "🎯 Dart", callback_data: "guide_dart" }],
+      [{ text: "🔢 Number", callback_data: "guide_number" }],
+      [{ text: "🍀 Luck", callback_data: "guide_luck" }],
       [
         { text: "🎰 Slots", callback_data: "game_slots" },
         { text: "🃏 Blackjack", callback_data: "game_blackjack" },
@@ -59,7 +66,7 @@ export function gamesMenu(): InlineKeyboardMarkup {
       ],
       [
         { text: "🏓 Plinko", callback_data: "game_plinko" },
-        { text: "⚔️ PvP Challenge", callback_data: "game_pvp" },
+        { text: "⚔️ PvP", callback_data: "game_pvp" },
       ],
       [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
     ],

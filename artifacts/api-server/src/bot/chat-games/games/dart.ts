@@ -1,25 +1,17 @@
-import type { ChatGameDefinition, ChatGameMode, RoundResult } from "../types";
+import type { ChatGameDefinition, ChatGameMode, RoundResult, ThrowPlan } from "../types";
 import { d } from "../random";
 
-function throwDart(mode: ChatGameMode): { value: number; display: string } {
-  if (mode === "normal") {
-    const score = d(20);
-    return { value: score, display: `🎯 ${score}` };
-  }
-  if (mode === "double") {
-    const a = d(20);
-    const b = d(20);
-    return { value: a + b, display: `🎯 ${a}+${b}=${a + b}` };
-  }
-  if (mode === "crazy") {
-    const score = d(100) <= 10 ? 50 : d(20);
-    return { value: score, display: score === 50 ? "🔴 BULL 50" : `🎯 ${score}` };
-  }
-  const a = d(20);
-  const b = d(20);
-  const bull = d(100) <= 8 ? 50 : 0;
-  const value = a + b + bull;
-  return { value, display: bull ? `🎯${a}+${b}+🔴${bull}=${value}` : `🎯${a}+${b}=${value}` };
+/** Telegram 🎯 values 1–6. */
+function plan(mode: ChatGameMode): ThrowPlan {
+  const throws = mode === "double" || mode === "crazy_double" ? 2 : 1;
+  return {
+    emoji: "🎯",
+    throws,
+    combine: (vals) => {
+      const sum = vals.reduce((a, b) => a + b, 0);
+      return { value: sum, display: `🎯 ${vals.join("+")}${vals.length > 1 ? `=${sum}` : ""}` };
+    },
+  };
 }
 
 export const dartGame: ChatGameDefinition = {
@@ -27,10 +19,15 @@ export const dartGame: ChatGameDefinition = {
   command: "dart",
   title: "Dart Duel",
   emoji: "🎯",
-  description: "Throw darts — highest score wins the point",
+  guideTitle: "Play Dart Games",
+  description: "Real Telegram dart emoji — highest score wins",
+  throwPlan: plan,
   playRound(mode): RoundResult {
-    const host = throwDart(mode);
-    const guest = throwDart(mode);
+    const p = plan(mode);
+    const hostVals = Array.from({ length: p.throws }, () => d(6));
+    const guestVals = Array.from({ length: p.throws }, () => d(6));
+    const host = p.combine(hostVals);
+    const guest = p.combine(guestVals);
     let winner: "host" | "guest" | "draw" = "draw";
     if (host.value > guest.value) winner = "host";
     else if (host.value < guest.value) winner = "guest";
@@ -40,7 +37,7 @@ export const dartGame: ChatGameDefinition = {
       hostDisplay: host.display,
       guestDisplay: guest.display,
       winner,
-      narration: ["🎯 Target ready…", "🏹 →", "🏹 → → 🎯", "✨ Hit!"],
+      narration: ["🎯 …"],
     };
   },
 };

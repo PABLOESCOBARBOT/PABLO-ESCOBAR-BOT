@@ -60,14 +60,29 @@ export interface RoundResult {
   narration: string[];
 }
 
+/** Real Telegram animated emoji throw (🎲 🎯 🏀 ⚽). */
+export type TgThrowEmoji = "🎲" | "🎯" | "🏀" | "⚽";
+
+export interface ThrowPlan {
+  emoji: TgThrowEmoji;
+  /** How many animated throws per player this round. */
+  throws: number;
+  /** Combine raw telegram values into score + display. */
+  combine(values: number[]): { value: number; display: string };
+}
+
 export interface ChatGameDefinition {
   id: string;
   command: string;
   title: string;
   emoji: string;
   description: string;
-  /** Play one scoring round (values sealed before animation). */
+  /** Guide title shown in main casino bot games menu. */
+  guideTitle: string;
+  /** Play one scoring round (RNG fallback when no telegram throws). */
   playRound(mode: ChatGameMode): RoundResult;
+  /** If set, use real Telegram dice/emoji throws instead of RNG. */
+  throwPlan?(mode: ChatGameMode): ThrowPlan;
   /** Optional extra lines explaining mode. */
   modeHint?(mode: ChatGameMode): string;
 }

@@ -33,6 +33,7 @@ export const coinflipGame: ChatGameDefinition = {
   command: "coinflip",
   title: "Coin Flip Duel",
   emoji: "🪙",
+  guideTitle: "Play Coin Flip Games",
   description: "Flip coins — better result wins the point",
   modeHint(mode) {
     if (mode === "normal") return "One flip — Heads beats Tails.";

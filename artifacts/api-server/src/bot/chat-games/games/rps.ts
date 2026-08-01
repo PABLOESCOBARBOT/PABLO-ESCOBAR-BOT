@@ -45,6 +45,7 @@ export const rpsGame: ChatGameDefinition = {
   command: "rps",
   title: "Rock Paper Scissors",
   emoji: "✊",
+  guideTitle: "Play RPS Games",
   description: "Classic RPS — win the throw to score",
   modeHint(mode) {
     if (mode === "normal") return "Classic Rock / Paper / Scissors.";
