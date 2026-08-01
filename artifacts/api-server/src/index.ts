@@ -6,6 +6,7 @@ import { isNowPaymentsEnabled, startPaymentPoller } from "./bot/nowpayments";
 import { handlePaidPayment } from "./routes/nowpayments-ipn";
 import { setCasinoBotForNotifications, setAdminBotForNotifications } from "./bot/bot-notify";
 import { getPendingNowPaymentsPaymentIds } from "./bot/db-helpers";
+import { chatGameMenuCommands } from "./bot/chat-games/register";
 
 const rawPort = process.env["PORT"];
 
@@ -43,13 +44,13 @@ if (!casinoToken) {
   casinoBot.telegram
     .setMyCommands([
       { command: "start", description: "🏠 Main menu / Open casino" },
-      { command: "games", description: "🎮 Play games" },
+      { command: "chatgames", description: "🎮 Chat duels list" },
+      { command: "games", description: "🎮 Games menu" },
       { command: "balance", description: "💰 Check chip balance" },
       { command: "deposit", description: "📥 Deposit chips" },
-      { command: "withdraw", description: "📤 Withdraw winnings" },
+      { command: "withdraw", description: "📤 Withdraw LTC" },
+      ...chatGameMenuCommands().filter((c) => c.command !== "chatgames"),
       { command: "slots", description: "🎰 Play Slots" },
-      { command: "dice", description: "🎲 Play Dice" },
-      { command: "coinflip", description: "🪙 Play Coin Flip" },
       { command: "blackjack", description: "🃏 Play Blackjack" },
       { command: "roulette", description: "🎡 Play Roulette" },
       { command: "crash", description: "📈 Play Crash" },

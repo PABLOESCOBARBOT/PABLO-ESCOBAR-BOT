@@ -78,6 +78,7 @@ import {
 import { playRoulette, type RouletteBet } from "./games/roulette";
 import { generateCrashPoint, resolveCrash, buildCrashBar } from "./games/crash";
 import { playPlinko } from "./games/plinko";
+import { registerChatGames } from "./chat-games/register";
 
 // ─── Session types ─────────────────────────────────────────────────────────────
 interface SessionData {
@@ -239,11 +240,13 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     return ctx.reply(helpText(), { parse_mode: "Markdown", reply_markup: mainMenu() });
   });
 
-  // ─── Game shortcut commands — work in both group and private ─────────────
+  // ─── Chat duel games: /dice 1 → mode → race → confirm → bot|player ─────
+  // (dice, coinflip, rps, football, basketball, dart, number, luck)
+  registerChatGames(bot);
+
+  // ─── Classic house games (menu / remaining slash commands) ─────────────
   const gameCommands: Array<[string, string, string, string]> = [
     ["slots",     "game_slots",     "slots",    "🎰 *Slots — Select your bet:*"],
-    ["dice",      "game_dice",      "dice",     "🎲 *Dice — Select your bet:*"],
-    ["coinflip",  "game_coinflip",  "coinflip", "🪙 *Coin Flip — Select your bet:*"],
     ["blackjack", "game_blackjack", "bj",       "🃏 *Blackjack — Select your bet:*"],
     ["roulette",  "game_roulette",  "roulette", "🎡 *Roulette — Select your bet:*"],
     ["crash",     "game_crash",     "crash",    "📈 *Crash — Select your bet:*"],
@@ -315,6 +318,30 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         parse_mode: "Markdown",
         reply_markup: gamesMenu(),
       });
+    }
+
+    if (data === "menu_chatgames") {
+      return ctx.editMessageText(
+        `🎮 *Chat Duels*\n\n` +
+          `Play in this chat vs Bot or another player.\n` +
+          `Min bet *1* · Payout always *1.9x*\n\n` +
+          `Examples:\n` +
+          `\`/dice 1\`\n` +
+          `\`/coinflip 5\`\n` +
+          `\`/rps 10\`\n` +
+          `\`/football 1\`\n` +
+          `\`/basketball 1\`\n` +
+          `\`/dart 1\`\n` +
+          `\`/number 1\`\n` +
+          `\`/luck 1\`\n\n` +
+          `Flow: Mode → First to 1/2/3 → Confirm → Bot or Player`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 Back", callback_data: "menu_games" }]],
+          },
+        },
+      );
     }
 
     if (data === "balance") {
@@ -1663,29 +1690,19 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 function helpText(): string {
   return (
     `🎰 *Casino Bot Help*\n\n` +
-    `*Commands:*\n` +
-    `/start — Main menu\n` +
-    `/balance — Check your chips\n` +
-    `/games — Show all games\n` +
-    `/dice — Play dice\n` +
-    `/slots — Play slots\n` +
-    `/coinflip — Play coin flip\n` +
-    `/blackjack — Play blackjack\n` +
-    `/roulette — Play roulette\n` +
-    `/crash — Play crash\n` +
-    `/plinko — Play plinko\n\n` +
-    `*Games:*\n` +
-    `🎰 Slots — Match symbols and win!\n` +
-    `🎲 Dice — Bet Low/High/Exact number\n` +
-    `🪙 Coin Flip — Heads or Tails (1.95x)\n` +
-    `🃏 Blackjack — Get closest to 21\n` +
-    `🎡 Roulette — Color/Number/Odd-Even\n` +
-    `📈 Crash — Cash out at the right time!\n` +
-    `🏓 Plinko — Drop the ball and win!\n` +
-    `⚔️ PvP — Challenge other players\n\n` +
-    `*Deposit/Withdraw:*\n` +
-    `/deposit — add chips\n` +
-    `/withdraw — cash out winnings\n\n` +
+    `*Chat Duels* (group or private):\n` +
+    `/chatgames — list all duel games\n` +
+    `/dice 1 — dice duel (example)\n` +
+    `/coinflip /rps /football /basketball\n` +
+    `/dart /number /luck\n` +
+    `Flow: Mode → First to 1/2/3 → Confirm → Bot/Player\n` +
+    `Min bet *1* · Win pays *1.9x* always\n\n` +
+    `*Classic house games:*\n` +
+    `/slots /blackjack /roulette /crash /plinko\n` +
+    `/games — open games menu\n\n` +
+    `*Wallet:*\n` +
+    `/balance /deposit /withdraw\n` +
+    `Withdrawals: *LTC only*\n\n` +
     `_Good luck! 🍀_`
   );
 }

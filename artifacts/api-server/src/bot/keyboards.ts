@@ -48,12 +48,9 @@ export function mainMenu(): InlineKeyboardMarkup {
 export function gamesMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
+      [{ text: "🎮 Chat Duels ( /chatgames )", callback_data: "menu_chatgames" }],
       [
         { text: "🎰 Slots", callback_data: "game_slots" },
-        { text: "🎲 Dice", callback_data: "game_dice" },
-      ],
-      [
-        { text: "🪙 Coin Flip", callback_data: "game_coinflip" },
         { text: "🃏 Blackjack", callback_data: "game_blackjack" },
       ],
       [
@@ -73,12 +70,16 @@ export function betMenu(prefix: string): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [
+        { text: "1 💰", callback_data: `${prefix}_bet_1` },
+        { text: "5 💰", callback_data: `${prefix}_bet_5` },
         { text: "10 💰", callback_data: `${prefix}_bet_10` },
-        { text: "50 💰", callback_data: `${prefix}_bet_50` },
-        { text: "100 💰", callback_data: `${prefix}_bet_100` },
       ],
       [
+        { text: "50 💰", callback_data: `${prefix}_bet_50` },
+        { text: "100 💰", callback_data: `${prefix}_bet_100` },
         { text: "500 💰", callback_data: `${prefix}_bet_500` },
+      ],
+      [
         { text: "1000 💰", callback_data: `${prefix}_bet_1000` },
         { text: "All In 🎲", callback_data: `${prefix}_bet_allin` },
       ],
