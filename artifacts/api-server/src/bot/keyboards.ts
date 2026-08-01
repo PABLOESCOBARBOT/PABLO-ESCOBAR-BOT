@@ -311,7 +311,7 @@ export function adminPaymentSettingsMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [{ text: "📋 Static Addresses (Manual)", callback_data: "admin_addresses" }],
-      [{ text: "🤖 CryptoPay Gateway Info", callback_data: "admin_cryptopay_info" }],
+      [{ text: "🤖 NOWPayments Gateway Info", callback_data: "admin_nowpayments_info" }],
       [{ text: "🔙 Back", callback_data: "admin_deposit" }],
     ],
   };

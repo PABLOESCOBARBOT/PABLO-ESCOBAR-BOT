@@ -9,7 +9,7 @@ import {
   recordGame,
   getRecentGames,
   createDepositRequest,
-  createCryptoPayDeposit,
+  createAutoDeposit,
   createWithdrawalRequest,
   getDepositAddresses,
   createPvpChallenge,
@@ -20,7 +20,11 @@ import {
   reopenPvpChallenge,
   InsufficientChipsError,
 } from "./db-helpers";
-import { isCryptoPayEnabled, createInvoice, CRYPTOPAY_ASSETS } from "./cryptopay";
+import {
+  isNowPaymentsEnabled,
+  createInvoice,
+  NOWPAYMENTS_CURRENCY_MAP,
+} from "./nowpayments";
 import {
   mainMenu,
   gamesMenu,
@@ -324,9 +328,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const crypto = data.replace("deposit_crypto_", "");
       return handleDepositCryptoSelected(ctx, tgId, crypto);
     }
-    if (data.startsWith("deposit_cp_")) {
-      const crypto = data.replace("deposit_cp_", "");
-      return handleCryptoPayDeposit(ctx, tgId, crypto);
+    if (data.startsWith("deposit_np_") || data.startsWith("deposit_cp_")) {
+      const crypto = data.replace(/^deposit_(np|cp)_/, "");
+      return handleNowPaymentsDeposit(ctx, tgId, crypto);
     }
     if (data.startsWith("deposit_manual_")) {
       const crypto = data.replace("deposit_manual_", "");
@@ -610,14 +614,8 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     ctx.session.awaitingDepositCrypto = crypto;
 
-    // Map crypto key to CryptoPay asset name
-    const cpAssetMap: Record<string, string> = {
-      usdt_trc20: "USDT", usdt_erc20: "USDT",
-      btc: "BTC", eth: "ETH", ton: "TON",
-      bnb: "BNB", ltc: "LTC",
-    };
-    const cpAsset = cpAssetMap[crypto];
-    const cpAvailable = isCryptoPayEnabled() && cpAsset && (CRYPTOPAY_ASSETS as readonly string[]).includes(cpAsset);
+    const npCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
+    const npAvailable = isNowPaymentsEnabled() && !!npCurrency;
 
     const baseText =
       `📥 *Deposit — ${addr.label}*\n\n` +
@@ -625,8 +623,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       `Rate: 1 ${crypto.toUpperCase()} = ${addr.chipsPerUnit} Chips\n` +
       `💵 *1 Chip = $1 USD* | Min: *$5*\n\n`;
 
-    if (cpAvailable) {
-      // Show both options: auto (CryptoPay) and manual (static address)
+    if (npAvailable) {
       return ctx.editMessageText(
         baseText +
         `Choose your deposit method:`,
@@ -634,7 +631,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
           parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "⚡ Auto Deposit (CryptoPay)", callback_data: `deposit_cp_${crypto}` }],
+              [{ text: "⚡ Auto Deposit (NOWPayments)", callback_data: `deposit_np_${crypto}` }],
               [{ text: "🏦 Manual (Send to Address)", callback_data: `deposit_manual_${crypto}` }],
               [{ text: "🔙 Back", callback_data: "menu_deposit" }],
             ],
@@ -643,7 +640,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       );
     }
 
-    // CryptoPay not configured — show only static address
+    // NOWPayments not configured — show only static address
     return ctx.editMessageText(
       baseText +
       `Send funds to this address:\n\`${addr.address}\`\n\n` +
@@ -683,7 +680,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     );
   }
 
-  async function handleCryptoPayDeposit(ctx: BotContext, tgId: string, crypto: string): Promise<void> {
+  async function handleNowPaymentsDeposit(ctx: BotContext, tgId: string, crypto: string): Promise<void> {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
     if (!addr) {
@@ -691,48 +688,48 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return;
     }
 
-    const cpAssetMap: Record<string, string> = {
-      usdt_trc20: "USDT", usdt_erc20: "USDT",
-      btc: "BTC", eth: "ETH", ton: "TON",
-      bnb: "BNB", ltc: "LTC",
-    };
-    const asset = cpAssetMap[crypto] ?? "USDT";
+    const payCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
+    if (!payCurrency) {
+      await ctx.answerCbQuery("❌ This crypto is not supported by NOWPayments", { show_alert: true });
+      return;
+    }
 
-    // Minimum amount — default 5 chips = 5 USD worth
-    const chipsPerUnit = parseFloat(addr.chipsPerUnit);
-    const minChips = 5;
-    const minAmount = chipsPerUnit > 0 ? (minChips / chipsPerUnit) : 1;
+    // Minimum deposit: $5 USD = 5 chips
+    const minChipsUsd = 5;
+    const orderId = `dep-${tgId}-${Date.now()}`;
 
     try {
       const invoice = await createInvoice(
-        asset,
-        minAmount,
-        `${tgId}:deposit`,
-        `Casino deposit — ${addr.label}`,
+        payCurrency,
+        minChipsUsd,
+        orderId,
+        `Casino deposit — ${addr.label} — user ${tgId}`,
       );
 
-      const payUrl = invoice.bot_invoice_url || invoice.pay_url;
+      const payUrl = invoice.invoice_url;
+      const invoiceId = String(invoice.id);
 
-      // Save pending deposit
-      const tx = await createCryptoPayDeposit(
+      const tx = await createAutoDeposit(
         tgId,
         crypto,
-        minAmount.toFixed(8),
-        String(invoice.invoice_id),
+        String(minChipsUsd),
+        invoiceId,
         payUrl,
+        orderId,
       );
 
       await ctx.editMessageText(
         `⚡ *Auto Deposit — ${addr.label}*\n\n` +
-        `Rate: 1 ${asset} = ${addr.chipsPerUnit} Chips\n\n` +
-        `Click the button below to pay via *CryptoBot*.\n` +
-        `Your chips will be credited *automatically* after payment is confirmed! 🔔\n\n` +
-        `Invoice ID: #${invoice.invoice_id}\nDeposit ID: #${tx.id}`,
+        `Amount: *$${minChipsUsd}* → *${minChipsUsd} Chips*\n` +
+        `Pay with: ${payCurrency.toUpperCase()}\n\n` +
+        `Click below to pay via *NOWPayments*.\n` +
+        `Chips are credited *automatically* after payment is confirmed! 🔔\n\n` +
+        `Invoice: \`${invoiceId}\`\nDeposit ID: #${tx.id}`,
         {
           parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "💳 Pay via CryptoBot", url: payUrl }],
+              [{ text: "💳 Pay with NOWPayments", url: payUrl }],
               [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
             ],
           },
@@ -740,7 +737,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       );
     } catch (e) {
       await ctx.editMessageText(
-        `❌ CryptoPay invoice creation failed.\n\nPlease try manual deposit or contact support.\n\nError: ${String(e)}`,
+        `❌ NOWPayments invoice creation failed.\n\nPlease try manual deposit or contact support.\n\nError: ${String(e)}`,
         {
           reply_markup: {
             inline_keyboard: [

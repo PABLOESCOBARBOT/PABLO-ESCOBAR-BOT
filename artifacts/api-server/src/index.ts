@@ -2,8 +2,8 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { createCasinoBot } from "./bot/casino-bot";
 import { createAdminBot } from "./bot/admin-bot";
-import { isCryptoPayEnabled, startPaymentPoller } from "./bot/cryptopay";
-import { setCasinoBotForNotifications, handlePaidInvoice } from "./routes/cryptopay-webhook";
+import { isNowPaymentsEnabled, startPaymentPoller } from "./bot/nowpayments";
+import { setCasinoBotForNotifications, handlePaidPayment } from "./routes/nowpayments-ipn";
 
 const rawPort = process.env["PORT"];
 
@@ -35,7 +35,6 @@ if (!casinoToken) {
 } else {
   const casinoBot = createCasinoBot(casinoToken);
 
-  // Register casino bot for CryptoPay payment notifications
   setCasinoBotForNotifications(casinoBot);
 
   // Telegraf's launch() promise resolves only when the bot stops — log start immediately
@@ -44,20 +43,17 @@ if (!casinoToken) {
   });
   logger.info("🎰 Casino Bot started (polling)");
 
-  // ── CryptoPay auto-payment poller ────────────────────────────────────────
-  // If CRYPTOPAY_TOKEN is set, poll for paid invoices every 30 seconds
-  // (use webhooks in production for instant notifications)
-  if (isCryptoPayEnabled()) {
-    logger.info("🔔 CryptoPay enabled — starting payment poller (30s interval)");
-    const poller = startPaymentPoller(30_000, handlePaidInvoice);
+  // ── NOWPayments auto-payment poller ──────────────────────────────────────
+  if (isNowPaymentsEnabled()) {
+    logger.info("🔔 NOWPayments enabled — starting payment poller (30s interval)");
+    const poller = startPaymentPoller(30_000, handlePaidPayment);
 
     process.once("SIGINT", () => clearInterval(poller));
     process.once("SIGTERM", () => clearInterval(poller));
   } else {
-    logger.warn("CRYPTOPAY_TOKEN not set — auto payment detection disabled (manual deposits only)");
+    logger.warn("NOWPAYMENTS_API_KEY not set — auto payment detection disabled (manual deposits only)");
   }
 
-  // Graceful shutdown
   process.once("SIGINT", () => casinoBot.stop("SIGINT"));
   process.once("SIGTERM", () => casinoBot.stop("SIGTERM"));
 }

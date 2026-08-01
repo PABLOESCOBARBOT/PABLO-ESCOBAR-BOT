@@ -18,7 +18,9 @@ A dual-bot Telegram casino system: a **Casino Bot** for players (games, deposit,
 | `ADMIN_BOT_TOKEN` | BotFather token for the admin bot |
 | `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram IDs of admins (e.g. `123456,789012`) |
 | `CASINO_BOT_USERNAME` | Username of the casino bot (without @) — used for redirect links in admin bot |
-| `CRYPTOPAY_TOKEN` | *(Optional)* CryptoPay API token from @CryptoBot — enables auto-payment detection |
+| `NOWPAYMENTS_API_KEY` | *(Optional)* NOWPayments API key — enables auto deposits |
+| `NOWPAYMENTS_IPN_SECRET` | *(Optional)* NOWPayments IPN secret for webhook verification |
+| `PUBLIC_BASE_URL` | *(Optional)* Public HTTPS origin for IPN callbacks |
 
 ## Stack
 
@@ -35,9 +37,9 @@ A dual-bot Telegram casino system: a **Casino Bot** for players (games, deposit,
 - `artifacts/api-server/src/bot/admin-bot.ts` — admin management bot (4-section menu)
 - `artifacts/api-server/src/bot/keyboards.ts` — all Telegram keyboard layouts
 - `artifacts/api-server/src/bot/db-helpers.ts` — all database operations
-- `artifacts/api-server/src/bot/cryptopay.ts` — CryptoPay gateway integration
+- `artifacts/api-server/src/bot/nowpayments.ts` — NOWPayments gateway integration
 - `artifacts/api-server/src/bot/games/` — game logic (slots, dice, coinflip, blackjack, roulette, crash, plinko)
-- `artifacts/api-server/src/routes/cryptopay-webhook.ts` — webhook handler for auto payment notifications
+- `artifacts/api-server/src/routes/nowpayments-ipn.ts` — IPN webhook handler for auto payment notifications
 - `lib/db/src/schema/index.ts` — database schema (source of truth)
 
 ## Admin Bot — 4 Sections
@@ -53,15 +55,16 @@ A dual-bot Telegram casino system: a **Casino Bot** for players (games, deposit,
 Admin sets their own wallet address per crypto in Admin Bot → Deposit → Crypto Addresses.
 User sends funds → submits TX hash → admin approves manually → chips credited.
 
-### CryptoPay Gateway (Auto)
-Recommended. Set `CRYPTOPAY_TOKEN` from @CryptoBot.
-Each user gets a unique invoice → pays via CryptoBot → payment auto-detected via polling (every 30s) or webhook → chips credited instantly → user notified on Telegram.
+### NOWPayments Gateway (Auto)
+Recommended. Set `NOWPAYMENTS_API_KEY` + `NOWPAYMENTS_IPN_SECRET`.
+Each user gets a unique invoice URL → pays via NOWPayments → IPN/polling confirms → chips credited → user notified on Telegram.
 
-**CryptoPay setup:**
-1. Open @CryptoBot on Telegram
-2. /pay → My Apps → Create App
-3. Copy API token → set `CRYPTOPAY_TOKEN=<token>`
-4. *(Optional)* Set webhook URL: `https://<your-domain>/api/cryptopay/webhook`
+**NOWPayments setup:**
+1. https://account.nowpayments.io → API keys
+2. Set `NOWPAYMENTS_API_KEY=<key>`
+3. Set `NOWPAYMENTS_IPN_SECRET=<secret>`
+4. Set `PUBLIC_BASE_URL=https://<your-domain>`
+5. IPN path: `https://<your-domain>/api/nowpayments/ipn`
 
 ## Games Available
 
@@ -75,4 +78,4 @@ _Populate as you build._
 
 - Always run `pnpm run typecheck:libs` before `pnpm --filter @workspace/api-server run typecheck` if lib/db schema changed — stale declarations cause false errors.
 - The admin bot checks `ADMIN_TELEGRAM_IDS` env var; add your numeric Telegram ID there or all requests will be denied.
-- CryptoPay polling runs every 30s; for instant notifications use the webhook endpoint instead.
+- NOWPayments polling runs every 30s; for instant notifications set PUBLIC_BASE_URL so IPN works.

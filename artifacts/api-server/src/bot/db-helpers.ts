@@ -215,13 +215,14 @@ export async function createDepositRequest(
   return rows[0]!;
 }
 
-/** Create a CryptoPay-based deposit — auto approved when payment confirmed */
-export async function createCryptoPayDeposit(
+/** Create a gateway (NOWPayments) deposit — auto approved when payment confirmed */
+export async function createAutoDeposit(
   telegramId: string,
   crypto: string,
   cryptoAmount: string,
   invoiceId: string,
   invoiceUrl: string,
+  orderId: string,
 ): Promise<Transaction> {
   const user = await getUserByTgId(telegramId);
   if (!user) throw new Error("User not found");
@@ -233,16 +234,16 @@ export async function createCryptoPayDeposit(
       amount: "0",
       crypto,
       cryptoAmount,
-      txHash: invoiceId,          // store invoice ID as txHash
-      walletAddress: invoiceUrl,  // store pay URL as walletAddress
+      txHash: invoiceId,          // NOWPayments invoice / payment id
+      walletAddress: invoiceUrl,  // checkout URL
       status: "pending",
-      note: `CryptoPay invoice #${invoiceId}`,
+      note: `NOWPayments order ${orderId}`,
     })
     .returning();
   return rows[0]!;
 }
 
-/** Find a pending deposit by CryptoPay invoice ID */
+/** Find a pending deposit by invoice/payment id stored in txHash */
 export async function findDepositByInvoiceId(invoiceId: string): Promise<Transaction | null> {
   const rows = await db
     .select()
@@ -251,6 +252,39 @@ export async function findDepositByInvoiceId(invoiceId: string): Promise<Transac
       and(
         eq(transactionsTable.txHash, invoiceId),
         eq(transactionsTable.status, "pending"),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** Find a pending deposit by NOWPayments order_id stored in note: "NOWPayments order <id>" */
+export async function findDepositByOrderId(orderId: string): Promise<Transaction | null> {
+  // Prefer matching note; also support order_id == deposit-<txId>
+  const byNote = await db
+    .select()
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.status, "pending"),
+        eq(transactionsTable.type, "deposit"),
+        eq(transactionsTable.note, `NOWPayments order ${orderId}`),
+      ),
+    )
+    .limit(1);
+  if (byNote[0]) return byNote[0];
+
+  const m = /^deposit-(\d+)$/.exec(orderId);
+  if (!m) return null;
+  const txId = parseInt(m[1]!, 10);
+  const rows = await db
+    .select()
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.id, txId),
+        eq(transactionsTable.status, "pending"),
+        eq(transactionsTable.type, "deposit"),
       ),
     )
     .limit(1);

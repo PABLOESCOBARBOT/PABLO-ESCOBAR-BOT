@@ -1,10 +1,10 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
-import cryptopayWebhookRouter from "./cryptopay-webhook";
+import nowpaymentsIpnRouter from "./nowpayments-ipn";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
-router.use(cryptopayWebhookRouter);
+router.use(nowpaymentsIpnRouter);
 
 export default router;

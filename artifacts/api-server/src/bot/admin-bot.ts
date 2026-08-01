@@ -193,13 +193,13 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         `💳 *Payment Settings*\n\n` +
         `📋 *Static Addresses (Manual)*\n` +
         `Set your own wallet address per crypto. Users send funds to your address and submit the TX hash. You approve manually.\n\n` +
-        `🤖 *CryptoPay Gateway (Auto)*\n` +
-        `Recommended for automatic payments. Each user gets a unique invoice. Payments are detected automatically and user is notified instantly.\n\n` +
-        `To set up CryptoPay:\n` +
-        `1. Open @CryptoBot on Telegram\n` +
-        `2. /start → My Apps → Create App\n` +
-        `3. Copy your API token\n` +
-        `4. Set env var: \`CRYPTOPAY_TOKEN=<token>\``,
+        `🤖 *NOWPayments Gateway (Auto)*\n` +
+        `Each user gets a unique invoice URL. Payments are detected via IPN/polling and chips are credited automatically.\n\n` +
+        `To set up NOWPayments:\n` +
+        `1. https://account.nowpayments.io\n` +
+        `2. Copy API key → \`NOWPAYMENTS_API_KEY\`\n` +
+        `3. Copy IPN secret → \`NOWPAYMENTS_IPN_SECRET\`\n` +
+        `4. Set \`PUBLIC_BASE_URL\` to your HTTPS domain`,
         {
           parse_mode: "Markdown",
           reply_markup: adminPaymentSettingsMenu(),
@@ -208,20 +208,23 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       return;
     }
 
-    if (data === "admin_cryptopay_info") {
-      const cpToken = process.env["CRYPTOPAY_TOKEN"];
-      const status = cpToken ? "✅ Connected" : "❌ Not configured";
+    if (data === "admin_nowpayments_info" || data === "admin_cryptopay_info") {
+      const apiKey = process.env["NOWPAYMENTS_API_KEY"];
+      const ipn = process.env["NOWPAYMENTS_IPN_SECRET"];
+      const status = apiKey ? "✅ API key set" : "❌ Not configured";
+      const ipnStatus = ipn ? "✅ IPN secret set" : "⚠️ Missing IPN secret";
       await ctx.editMessageText(
-        `🤖 *CryptoPay Gateway*\n\n` +
-        `Status: ${status}\n\n` +
-        `CryptoPay by Telegram lets you generate unique payment invoices per user.\n\n` +
+        `🤖 *NOWPayments Gateway*\n\n` +
+        `API: ${status}\n` +
+        `IPN: ${ipnStatus}\n\n` +
         `*How to set up:*\n` +
-        `1. Open @CryptoBot on Telegram\n` +
-        `2. Go to /pay → Create App\n` +
-        `3. Get your API token\n` +
-        `4. Add to env: \`CRYPTOPAY_TOKEN=<token>\`\n\n` +
-        `Supported: BTC, ETH, TON, USDT, BNB, TRX, LTC\n\n` +
-        `Payments notify users automatically when confirmed! 🔔`,
+        `1. Create account at nowpayments.io\n` +
+        `2. Settings → API keys → \`NOWPAYMENTS_API_KEY\`\n` +
+        `3. Settings → IPN Secret → \`NOWPAYMENTS_IPN_SECRET\`\n` +
+        `4. Set public URL: \`PUBLIC_BASE_URL=https://your-domain\`\n` +
+        `   IPN path: \`/api/nowpayments/ipn\`\n\n` +
+        `Supported: USDT (TRC20/ERC20), BTC, ETH, TON, BNB, LTC\n\n` +
+        `Users get auto chip credit + Telegram notify when paid! 🔔`,
         {
           parse_mode: "Markdown",
           reply_markup: {
