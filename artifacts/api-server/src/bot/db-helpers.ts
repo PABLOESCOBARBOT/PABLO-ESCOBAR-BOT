@@ -371,6 +371,88 @@ export async function getPendingWithdrawals() {
     .limit(50);
 }
 
+/** A user's withdrawal history (pending + recent) */
+export async function getUserWithdrawals(telegramId: string, limit = 10) {
+  const user = await getUserByTgId(telegramId);
+  if (!user) return [];
+  return db
+    .select()
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.userId, user.id),
+        eq(transactionsTable.type, "withdrawal"),
+      ),
+    )
+    .orderBy(desc(transactionsTable.createdAt))
+    .limit(limit);
+}
+
+/** Count pending withdrawals for a user */
+export async function countUserPendingWithdrawals(telegramId: string): Promise<number> {
+  const user = await getUserByTgId(telegramId);
+  if (!user) return 0;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.userId, user.id),
+        eq(transactionsTable.type, "withdrawal"),
+        eq(transactionsTable.status, "pending"),
+      ),
+    );
+  return Number(row?.count ?? 0);
+}
+
+/**
+ * User cancels their own pending withdrawal — refunds chips once.
+ */
+export async function cancelUserWithdrawal(telegramId: string, txId: number): Promise<Transaction> {
+  const user = await getUserByTgId(telegramId);
+  if (!user) throw new Error("User not found");
+
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(transactionsTable)
+      .where(
+        and(
+          eq(transactionsTable.id, txId),
+          eq(transactionsTable.userId, user.id),
+          eq(transactionsTable.type, "withdrawal"),
+          eq(transactionsTable.status, "pending"),
+        ),
+      )
+      .limit(1);
+
+    if (!rows[0]) throw new Error("Pending withdrawal not found");
+
+    const updated = await tx
+      .update(transactionsTable)
+      .set({ status: "rejected", note: "Cancelled by user" })
+      .where(
+        and(
+          eq(transactionsTable.id, txId),
+          eq(transactionsTable.status, "pending"),
+        ),
+      )
+      .returning();
+
+    if (!updated[0]) throw new Error("Already processed");
+
+    await tx
+      .update(usersTable)
+      .set({
+        chips: sql`(${usersTable.chips}::numeric + ${updated[0].amount})`,
+        updatedAt: new Date(),
+      })
+      .where(eq(usersTable.id, user.id));
+
+    return updated[0];
+  });
+}
+
 /** Approved withdrawals from today */
 export async function getApprovedWithdrawalsToday() {
   const today = new Date();

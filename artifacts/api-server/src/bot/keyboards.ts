@@ -219,8 +219,42 @@ export function withdrawMenu(addresses: { crypto: string; label: string }[]): In
   const rows = addresses.map(a => [
     { text: a.label, callback_data: `withdraw_crypto_${a.crypto}` },
   ]);
+  rows.push([{ text: "📜 My Withdrawals", callback_data: "withdraw_history" }]);
   rows.push([{ text: "🔙 Back", callback_data: "main_menu" }]);
   return { inline_keyboard: rows };
+}
+
+/** Withdraw amount picker — amounts are chips (= USD) */
+export function withdrawAmountMenu(crypto: string, balance: number): InlineKeyboardMarkup {
+  const opts = [5, 10, 20, 50, 100, 500].filter((n) => n <= balance);
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < opts.length; i += 3) {
+    rows.push(
+      opts.slice(i, i + 3).map((n) => ({
+        text: `$${n}`,
+        callback_data: `withdraw_amt_${crypto}_${n}`,
+      })),
+    );
+  }
+  if (balance >= 5) {
+    rows.push([
+      { text: `All In ($${Math.floor(balance)})`, callback_data: `withdraw_amt_${crypto}_all` },
+      { text: "✏️ Custom", callback_data: `withdraw_custom_${crypto}` },
+    ]);
+  }
+  rows.push([{ text: "🔙 Back", callback_data: "menu_withdraw" }]);
+  return { inline_keyboard: rows };
+}
+
+export function withdrawConfirmMenu(crypto: string): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Confirm Withdraw", callback_data: `withdraw_confirm_${crypto}` },
+        { text: "❌ Cancel", callback_data: "menu_withdraw" },
+      ],
+    ],
+  };
 }
 
 export function pvpMenu(betOptions: number[]): InlineKeyboardMarkup {

@@ -4,7 +4,7 @@ import { createCasinoBot } from "./bot/casino-bot";
 import { createAdminBot } from "./bot/admin-bot";
 import { isNowPaymentsEnabled, startPaymentPoller } from "./bot/nowpayments";
 import { handlePaidPayment } from "./routes/nowpayments-ipn";
-import { setCasinoBotForNotifications } from "./bot/bot-notify";
+import { setCasinoBotForNotifications, setAdminBotForNotifications } from "./bot/bot-notify";
 import { getPendingNowPaymentsPaymentIds } from "./bot/db-helpers";
 
 const rawPort = process.env["PORT"];
@@ -65,6 +65,7 @@ if (!adminToken) {
   logger.warn("ADMIN_BOT_TOKEN not set — admin bot will not start");
 } else {
   const adminBot = createAdminBot(adminToken);
+  setAdminBotForNotifications(adminBot);
   adminBot.launch({ dropPendingUpdates: true }).catch((err) => {
     logger.error({ err }, "Failed to start Admin Bot");
   });

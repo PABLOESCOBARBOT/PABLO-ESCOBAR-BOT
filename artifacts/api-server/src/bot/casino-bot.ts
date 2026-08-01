@@ -20,8 +20,12 @@ import {
   reopenPvpChallenge,
   getTransactionById,
   approveTransaction,
+  getUserWithdrawals,
+  countUserPendingWithdrawals,
+  cancelUserWithdrawal,
   InsufficientChipsError,
 } from "./db-helpers";
+import { notifyAdmins } from "./bot-notify";
 import {
   isNowPaymentsEnabled,
   createDepositCheckout,
@@ -52,6 +56,8 @@ import {
   depositMenu,
   depositAmountMenu,
   withdrawMenu,
+  withdrawAmountMenu,
+  withdrawConfirmMenu,
   pvpMenu,
   pvpAcceptMenu,
   groupGamesMenu,
@@ -81,6 +87,7 @@ interface SessionData {
   awaitingWithdrawAddress?: boolean;
   awaitingWithdrawAmount?: boolean;
   withdrawChips?: number;
+  pendingWithdrawAddress?: string;
   awaitingRouletteNumber?: number;
   crashPoint?: number;
   crashBet?: number;
@@ -144,15 +151,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return;
     }
     if (payload === "withdraw") {
-      const addresses = await getDepositAddresses();
-      if (addresses.length === 0) {
-        await ctx.reply("⚠️ No crypto addresses available.", { reply_markup: mainMenu() });
-        return;
-      }
-      await ctx.reply("📤 *Withdraw Chips*\n\nSelect which crypto to withdraw to:", {
-        parse_mode: "Markdown",
-        reply_markup: withdrawMenu(addresses.map(a => ({ crypto: a.crypto, label: a.label }))),
-      });
+      await showWithdrawOptions(ctx, true);
       return;
     }
     if (payload.startsWith("game_")) {
@@ -366,11 +365,45 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       if (isGroup(ctx)) {
         return ctx.answerCbQuery("Please open the bot in private to withdraw", { show_alert: true });
       }
+      // clear any mid-flow withdraw session
+      delete ctx.session.awaitingWithdrawCrypto;
+      delete ctx.session.awaitingWithdrawAmount;
+      delete ctx.session.awaitingWithdrawAddress;
+      delete ctx.session.withdrawChips;
+      delete ctx.session.pendingWithdrawAddress;
       return handleWithdrawMenu(ctx);
     }
     if (data.startsWith("withdraw_crypto_")) {
       const crypto = data.replace("withdraw_crypto_", "");
       return handleWithdrawCryptoSelected(ctx, tgId, crypto);
+    }
+    if (data.startsWith("withdraw_amt_")) {
+      const rest = data.replace("withdraw_amt_", "");
+      const amountStr = rest.split("_").pop()!;
+      const crypto = rest.slice(0, rest.length - amountStr.length - 1);
+      return handleWithdrawAmountPicked(ctx, tgId, crypto, amountStr);
+    }
+    if (data.startsWith("withdraw_custom_")) {
+      const crypto = data.replace("withdraw_custom_", "");
+      ctx.session.awaitingWithdrawCrypto = crypto;
+      ctx.session.awaitingWithdrawAmount = true;
+      const bal = await getChips(tgId);
+      return ctx.editMessageText(
+        `✏️ <b>Custom Withdraw — ${crypto.toUpperCase()}</b>\n\n` +
+          `Balance: <b>${bal.toFixed(0)} Chips</b>\nMin: <b>$5</b>\n\n` +
+          `Type how many chips to withdraw:`,
+        { parse_mode: "HTML" },
+      );
+    }
+    if (data.startsWith("withdraw_confirm_")) {
+      return handleWithdrawConfirm(ctx, tgId);
+    }
+    if (data === "withdraw_history") {
+      return handleWithdrawHistory(ctx, tgId);
+    }
+    if (data.startsWith("withdraw_cancel_")) {
+      const txId = parseInt(data.replace("withdraw_cancel_", ""), 10);
+      return handleWithdrawCancel(ctx, tgId, txId);
     }
 
     // ── Game: Slots ──────────────────────────────────────────────────────
@@ -552,29 +585,37 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     if (sess.awaitingWithdrawAmount) {
       const chips = parseInt(text, 10);
       if (isNaN(chips) || chips <= 0) { await ctx.reply("❌ Please enter a valid chip amount"); return; }
+      if (chips < 5) { await ctx.reply("❌ Minimum withdrawal is <b>$5 (5 Chips)</b>.", { parse_mode: "HTML" }); return; }
       const balance = await getChips(tgId);
       if (chips > balance) { await ctx.reply(`❌ Insufficient chips. Balance: ${balance.toFixed(0)}`); return; }
       sess.awaitingWithdrawAmount = false;
       sess.awaitingWithdrawAddress = true;
       sess.withdrawChips = chips;
-      await ctx.reply(`✅ ${chips} chips. Now please enter your ${sess.awaitingWithdrawCrypto?.toUpperCase()} wallet address:`);
+      await ctx.reply(
+        `✅ Amount: <b>${chips} Chips ($${chips})</b>\n\n` +
+          `Now paste your <b>${sess.awaitingWithdrawCrypto?.toUpperCase()}</b> wallet address:`,
+        { parse_mode: "HTML" },
+      );
       return;
     }
 
     if (sess.awaitingWithdrawAddress) {
-      const address = text;
+      const address = text.trim();
+      if (address.length < 8 || address.includes(" ")) {
+        await ctx.reply("❌ Invalid wallet address. Please paste a valid address.");
+        return;
+      }
       const crypto = sess.awaitingWithdrawCrypto!;
       const chips = sess.withdrawChips!;
       sess.awaitingWithdrawAddress = false;
-      delete sess.awaitingWithdrawCrypto;
-      delete sess.withdrawChips;
-      const balance = await getChips(tgId);
-      if (chips > balance) { await ctx.reply("❌ Insufficient chips."); return; }
-      await deductChips(tgId, chips, "withdrawal_pending", `Withdrawal request to ${address}`);
-      const tx = await createWithdrawalRequest(tgId, chips, crypto, address);
+      sess.pendingWithdrawAddress = address;
       await ctx.reply(
-        `📤 *Withdrawal Request Submitted!*\n\nID: #${tx.id}\nChips: ${chips}\nCrypto: ${crypto.toUpperCase()}\nAddress: \`${address}\`\n\nAdmin will process shortly. 🙏`,
-        { parse_mode: "Markdown", reply_markup: mainMenu() },
+        `📤 <b>Confirm Withdrawal</b>\n\n` +
+          `Amount: <b>${chips} Chips ($${chips})</b>\n` +
+          `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
+          `Address:\n<code>${address}</code>\n\n` +
+          `⚠️ Chips will be locked until admin pays or rejects.`,
+        { parse_mode: "HTML", reply_markup: withdrawConfirmMenu(crypto) },
       );
       return;
     }
@@ -899,28 +940,215 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     await ctx.editMessageText(`✍️ Please paste your Transaction Hash / TXID:`, { reply_markup: undefined });
   }
 
-  async function handleWithdrawMenu(ctx: BotContext) {
+  async function showWithdrawOptions(ctx: BotContext, asReply = false) {
     const addresses = await getDepositAddresses();
-    if (addresses.length === 0) {
-      return ctx.editMessageText("⚠️ No crypto addresses available.", { reply_markup: mainMenu() });
+    const options =
+      addresses.length > 0
+        ? addresses.map(a => ({ crypto: a.crypto, label: a.label }))
+        : DEFAULT_DEPOSIT_COINS;
+
+    const tgId = String(ctx.from!.id);
+    const bal = await getChips(tgId);
+    const pending = await countUserPendingWithdrawals(tgId);
+
+    const text =
+      `📤 <b>Withdraw Winnings</b>\n\n` +
+      `💰 Balance: <b>${bal.toFixed(0)} Chips</b> ($${bal.toFixed(0)})\n` +
+      `⏳ Pending withdrawals: <b>${pending}</b>\n` +
+      `💵 Min withdraw: <b>$5</b>\n\n` +
+      `Select crypto to receive:`;
+
+    const markup = withdrawMenu(options);
+    return asReply
+      ? ctx.reply(text, { parse_mode: "HTML", reply_markup: markup })
+      : ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: markup });
+  }
+
+  async function handleWithdrawMenu(ctx: BotContext) {
+    return showWithdrawOptions(ctx, false);
+  }
+
+  async function handleWithdrawCryptoSelected(ctx: BotContext, tgId: string, crypto: string) {
+    const chips = await getChips(tgId);
+    if (chips < 5) {
+      return ctx.answerCbQuery("❌ Minimum withdrawal is $5. Win more chips first!", { show_alert: true });
     }
+    ctx.session.awaitingWithdrawCrypto = crypto;
+    delete ctx.session.awaitingWithdrawAmount;
+    delete ctx.session.awaitingWithdrawAddress;
+    delete ctx.session.withdrawChips;
+    delete ctx.session.pendingWithdrawAddress;
+
+    const label = DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
     return ctx.editMessageText(
-      "📤 *Withdraw Chips*\n\nSelect which crypto to withdraw to:",
+      `📤 <b>Withdraw — ${label}</b>\n\n` +
+        `💰 Balance: <b>${chips.toFixed(0)} Chips</b>\n` +
+        `Min: <b>$5</b>\n\n` +
+        `Select amount:`,
+      { parse_mode: "HTML", reply_markup: withdrawAmountMenu(crypto, chips) },
+    );
+  }
+
+  async function handleWithdrawAmountPicked(
+    ctx: BotContext,
+    tgId: string,
+    crypto: string,
+    amountStr: string,
+  ) {
+    const bal = await getChips(tgId);
+    const chips = amountStr === "all" ? Math.floor(bal) : parseInt(amountStr, 10);
+    if (!chips || chips < 5) {
+      return ctx.answerCbQuery("❌ Minimum withdrawal is $5", { show_alert: true });
+    }
+    if (chips > bal) {
+      return ctx.answerCbQuery(`❌ Insufficient chips. Balance: ${bal.toFixed(0)}`, { show_alert: true });
+    }
+
+    ctx.session.awaitingWithdrawCrypto = crypto;
+    ctx.session.withdrawChips = chips;
+    ctx.session.awaitingWithdrawAddress = true;
+    ctx.session.awaitingWithdrawAmount = false;
+
+    const label = DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
+    return ctx.editMessageText(
+      `📤 <b>Withdraw — ${label}</b>\n\n` +
+        `Amount: <b>${chips} Chips ($${chips})</b>\n\n` +
+        `Paste your <b>${label}</b> wallet address:`,
+      { parse_mode: "HTML" },
+    );
+  }
+
+  async function handleWithdrawConfirm(ctx: BotContext, tgId: string) {
+    const crypto = ctx.session.awaitingWithdrawCrypto;
+    const chips = ctx.session.withdrawChips;
+    const address = ctx.session.pendingWithdrawAddress;
+
+    if (!crypto || !chips || !address) {
+      return ctx.answerCbQuery("❌ Withdrawal session expired. Start again.", { show_alert: true });
+    }
+
+    const pending = await countUserPendingWithdrawals(tgId);
+    if (pending >= 3) {
+      return ctx.answerCbQuery("❌ You already have 3 pending withdrawals. Wait for admin.", { show_alert: true });
+    }
+
+    try {
+      await deductChips(tgId, chips, "withdrawal_pending", `Withdrawal to ${address}`);
+    } catch (e) {
+      if (e instanceof InsufficientChipsError) {
+        return ctx.answerCbQuery("❌ Insufficient chips", { show_alert: true });
+      }
+      throw e;
+    }
+
+    const tx = await createWithdrawalRequest(tgId, chips, crypto, address);
+    const user = await getUserByTgId(tgId);
+    const uname = user?.username ? `@${user.username}` : user?.firstName ?? tgId;
+
+    delete ctx.session.awaitingWithdrawCrypto;
+    delete ctx.session.withdrawChips;
+    delete ctx.session.pendingWithdrawAddress;
+    delete ctx.session.awaitingWithdrawAddress;
+
+    // Notify admins with approve/reject buttons
+    await notifyAdmins(
+      `📤 <b>New Withdrawal Request</b>\n\n` +
+        `ID: <b>#${tx.id}</b>\n` +
+        `User: ${uname} (<code>${tgId}</code>)\n` +
+        `Amount: <b>${chips} Chips ($${chips})</b>\n` +
+        `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
+        `Address:\n<code>${address}</code>\n\n` +
+        `Send crypto, then tap Paid.`,
       {
-        parse_mode: "Markdown",
-        reply_markup: withdrawMenu(addresses.map(a => ({ crypto: a.crypto, label: a.label }))),
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: `✅ Paid #${tx.id}`, callback_data: `admin_approve_${tx.id}` },
+              { text: `❌ Reject #${tx.id}`, callback_data: `admin_reject_${tx.id}` },
+            ],
+            [{ text: "👤 User", callback_data: `admin_user_${tgId}` }],
+          ],
+        },
+      },
+    );
+
+    const newBal = await getChips(tgId);
+    return ctx.editMessageText(
+      `✅ <b>Withdrawal Submitted!</b>\n\n` +
+        `Request ID: <b>#${tx.id}</b>\n` +
+        `Amount: <b>${chips} Chips ($${chips})</b>\n` +
+        `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
+        `Address:\n<code>${address}</code>\n\n` +
+        `🔒 Chips locked. Admin will pay soon.\n` +
+        `💼 Remaining balance: <b>${newBal.toFixed(0)} Chips</b>`,
+      {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "📜 My Withdrawals", callback_data: "withdraw_history" }],
+            [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+          ],
+        },
       },
     );
   }
 
-  async function handleWithdrawCryptoSelected(ctx: BotContext, tgId: string, crypto: string) {
-    ctx.session.awaitingWithdrawCrypto = crypto;
-    ctx.session.awaitingWithdrawAmount = true;
-    const chips = await getChips(tgId);
-    await ctx.editMessageText(
-      `📤 *Withdraw — ${crypto.toUpperCase()}*\n\n💰 Your Balance: ${chips.toFixed(0)} Chips\n\nHow many chips to withdraw? (e.g.: 500)`,
-      { parse_mode: "Markdown" },
-    );
+  async function handleWithdrawHistory(ctx: BotContext, tgId: string) {
+    const list = await getUserWithdrawals(tgId, 10);
+    if (list.length === 0) {
+      return ctx.editMessageText("📭 No withdrawals yet.", {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "📤 Withdraw Now", callback_data: "menu_withdraw" }],
+            [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+          ],
+        },
+      });
+    }
+
+    let msg = `📜 <b>Your Withdrawals</b>\n\n`;
+    const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+    for (const t of list) {
+      const status =
+        t.status === "pending" ? "⏳ Pending" :
+        t.status === "approved" ? "✅ Paid" : "❌ Rejected";
+      msg += `#${t.id} — <b>${parseFloat(t.amount).toFixed(0)}</b> ${t.crypto?.toUpperCase() ?? ""} — ${status}\n`;
+      if (t.walletAddress) msg += `  <code>${t.walletAddress.slice(0, 28)}...</code>\n`;
+      if (t.status === "pending") {
+        keyboard.push([{ text: `❌ Cancel #${t.id}`, callback_data: `withdraw_cancel_${t.id}` }]);
+      }
+    }
+    keyboard.push([{ text: "📤 New Withdraw", callback_data: "menu_withdraw" }]);
+    keyboard.push([{ text: "🏠 Main Menu", callback_data: "main_menu" }]);
+
+    return ctx.editMessageText(msg, {
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: keyboard },
+    });
+  }
+
+  async function handleWithdrawCancel(ctx: BotContext, tgId: string, txId: number) {
+    try {
+      const tx = await cancelUserWithdrawal(tgId, txId);
+      const bal = await getChips(tgId);
+      await ctx.answerCbQuery("✅ Cancelled — chips refunded", { show_alert: true });
+      return ctx.editMessageText(
+        `❌ Withdrawal <b>#${tx.id}</b> cancelled.\n` +
+          `💸 <b>${parseFloat(tx.amount).toFixed(0)} chips</b> refunded.\n` +
+          `💼 Balance: <b>${bal.toFixed(0)} Chips</b>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📜 My Withdrawals", callback_data: "withdraw_history" }],
+              [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+            ],
+          },
+        },
+      );
+    } catch (e) {
+      return ctx.answerCbQuery(`❌ ${String(e)}`, { show_alert: true });
+    }
   }
 
   // ─── SLOTS ─── with 🎰 Telegram dice animation ──────────────────────────
@@ -1436,7 +1664,8 @@ function helpText(): string {
     `🏓 Plinko — Drop the ball and win!\n` +
     `⚔️ PvP — Challenge other players\n\n` +
     `*Deposit/Withdraw:*\n` +
-    `Use /deposit in private chat.\n\n` +
+    `/deposit — add chips\n` +
+    `/withdraw — cash out winnings\n\n` +
     `_Good luck! 🍀_`
   );
 }

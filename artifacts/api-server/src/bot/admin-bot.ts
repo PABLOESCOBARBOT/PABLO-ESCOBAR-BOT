@@ -397,11 +397,12 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
           if (user) {
             await notifyCasinoUser(
               user.telegramId,
-              `✅ *Withdrawal Approved*\n\n` +
-                `#${txId} — *${parseFloat(existing.amount).toFixed(0)} chips*\n` +
+              `✅ *Withdrawal Paid!*\n\n` +
+                `Request #${txId}\n` +
+                `Amount: *${parseFloat(existing.amount).toFixed(0)} Chips ($${parseFloat(existing.amount).toFixed(0)})*\n` +
                 `Crypto: ${existing.crypto?.toUpperCase() ?? "N/A"}\n` +
                 `Address: \`${existing.walletAddress ?? ""}\`\n\n` +
-                `Payment has been sent. 🙏`,
+                `Your winnings have been sent. 💸🙏`,
             );
           }
           await ctx.editMessageText(
