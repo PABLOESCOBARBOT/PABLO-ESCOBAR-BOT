@@ -86,7 +86,7 @@ async function buildUserDetail(telegramId: string): Promise<{
     `👤 *User Details*\n\n` +
     `Name: ${name}\n` +
     `TG ID: \`${user.telegramId}\`\n` +
-    `Balance: *${parseFloat(user.chips).toFixed(0)} Chips*\n` +
+    `Balance: *${parseFloat(user.chips).toFixed(0)} USD*\n` +
     `Status: ${user.isBanned ? "🚫 Banned" : "✅ Active"}\n` +
     `Joined: ${user.createdAt.toLocaleDateString()}\n\n` +
     `📥 Total Deposited: *${(fin?.totalDeposited ?? 0).toFixed(0)}*\n` +
@@ -189,7 +189,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     await ctx.reply(
       `📊 *Casino Stats*\n\n` +
         `👥 Users: ${stats.totalUsers}\n` +
-        `💰 Chips: ${stats.totalChips.toFixed(0)}\n` +
+        `💰 USD: ${stats.totalChips.toFixed(0)}\n` +
         `🎮 Games: ${stats.totalGames}\n` +
         `⏳ Pending TX: ${stats.pendingTx}`,
       { parse_mode: "Markdown", reply_markup: adminMenu() },
@@ -263,8 +263,8 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       await ctx.editMessageText(
         `📈 *Wager Report*\n\n` +
           `Games: *${r.games}*\n` +
-          `Total wagered: *${r.wagered.toFixed(0)}* chips\n` +
-          `Total paid out: *${r.paid.toFixed(0)}* chips\n` +
+          `Total wagered: *${r.wagered.toFixed(0)}* USD\n` +
+          `Total paid out: *${r.paid.toFixed(0)}* USD\n` +
           `House edge (approx): *${(r.wagered - r.paid).toFixed(0)}*`,
         {
           parse_mode: "Markdown",
@@ -313,7 +313,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     // ── 👥 USERS SECTION ───────────────────────────────────────────────────
     if (data === "admin_users") {
       await ctx.editMessageText(
-        "👥 *User Management*\n\nView details, deposits, credit/debit chips, ban users.",
+        "👥 *User Management*\n\nView details, deposits, credit/debit USD, ban users.",
         { parse_mode: "Markdown", reply_markup: adminUsersMenu() },
       );
       return;
@@ -342,7 +342,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     // ── 🎁 BONUSES SECTION ─────────────────────────────────────────────────
     if (data === "admin_bonuses") {
       await ctx.editMessageText(
-        "🎁 *Bonus Management*\n\nGive chips bonuses to players or view bonus history.",
+        "🎁 *Bonus Management*\n\nGive USD bonuses to players or view bonus history.",
         { parse_mode: "Markdown", reply_markup: adminBonusesMenu() },
       );
       return;
@@ -355,7 +355,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         `🎮 *Games & Casino*\n\n` +
         `👥 Total Users: ${stats.totalUsers}\n` +
         `🎮 Total Games Played: ${stats.totalGames}\n` +
-        `💰 Chips in Circulation: ${stats.totalChips.toFixed(0)}\n\n` +
+        `💰 USD in Circulation: ${stats.totalChips.toFixed(0)}\n\n` +
         `Use the casino bot to manage games.`,
         { parse_mode: "Markdown", reply_markup: adminGamesMenu(casinoBotUsername) },
       );
@@ -407,7 +407,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         `📋 *Static Addresses (Manual)*\n` +
         `Set your own wallet address per crypto. Users send funds to your address and submit the TX hash. You approve manually.\n\n` +
         `🤖 *NOWPayments Gateway (Auto)*\n` +
-        `Each user gets a unique invoice URL. Payments are detected via IPN/polling and chips are credited automatically.\n\n` +
+        `Each user gets a unique invoice URL. Payments are detected via IPN/polling and USD are credited automatically.\n\n` +
         `To set up NOWPayments:\n` +
         `1. https://account.nowpayments.io\n` +
         `2. Copy API key → \`NOWPAYMENTS_API_KEY\`\n` +
@@ -437,7 +437,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         `4. Set public URL: \`PUBLIC_BASE_URL=https://your-domain\`\n` +
         `   IPN path: \`/api/nowpayments/ipn\`\n\n` +
         `Supported: USDT (TRC20/ERC20), BTC, ETH, TON, BNB, LTC\n\n` +
-        `Users get auto chip credit + Telegram notify when paid! 🔔`,
+        `Users get auto USD credit + Telegram notify when paid! 🔔`,
         {
           parse_mode: "Markdown",
           reply_markup: {
@@ -462,12 +462,12 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         });
         return;
       }
-      let msg = `📤 *Pending Withdrawals (${txns.length})*\n\nSend crypto, then tap *Paid*. Reject refunds chips.\n\n`;
+      let msg = `📤 *Pending Withdrawals (${txns.length})*\n\nSend crypto, then tap *Paid*. Reject refunds USD.\n\n`;
       const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
       for (const tx of txns.slice(0, 10)) {
         const user = await getUserById(tx.userId);
         const uname = user?.username ? `@${user.username}` : user?.telegramId ?? "?";
-        msg += `#${tx.id} — *${parseFloat(tx.amount).toFixed(0)} Chips*\n`;
+        msg += `#${tx.id} — *${parseFloat(tx.amount).toFixed(0)} USD*\n`;
         msg += `  User: ${uname}\n`;
         msg += `  Crypto: ${tx.crypto?.toUpperCase() ?? "N/A"}\n`;
         if (tx.walletAddress) msg += `  To: \`${tx.walletAddress}\`\n`;
@@ -498,7 +498,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       }
       let msg = `✅ *Approved Withdrawals Today (${txns.length})*\n\n`;
       for (const tx of txns.slice(0, 15)) {
-        msg += `#${tx.id} — ${parseFloat(tx.amount).toFixed(0)} Chips — ${tx.crypto?.toUpperCase() ?? "N/A"}\n`;
+        msg += `#${tx.id} — ${parseFloat(tx.amount).toFixed(0)} USD — ${tx.crypto?.toUpperCase() ?? "N/A"}\n`;
       }
       await ctx.editMessageText(msg, {
         parse_mode: "Markdown",
@@ -525,7 +525,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         return;
       }
 
-      // Withdrawals already deducted chips on request — just mark done
+      // Withdrawals already deducted USD on request — just mark done
       if (existing.type === "withdrawal") {
         try {
           await approveTransaction(txId, parseFloat(existing.amount));
@@ -535,14 +535,14 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
               user.telegramId,
               `✅ *Withdrawal Paid!*\n\n` +
                 `Request #${txId}\n` +
-                `Amount: *${parseFloat(existing.amount).toFixed(0)} Chips ($${parseFloat(existing.amount).toFixed(0)})*\n` +
+                `Amount: *${parseFloat(existing.amount).toFixed(0)} USD ($${parseFloat(existing.amount).toFixed(0)})*\n` +
                 `Crypto: ${existing.crypto?.toUpperCase() ?? "N/A"}\n` +
                 `Address: \`${existing.walletAddress ?? ""}\`\n\n` +
                 `Your winnings have been sent. 💸🙏`,
             );
           }
           await ctx.editMessageText(
-            `✅ Withdrawal #${txId} marked done.\n${parseFloat(existing.amount).toFixed(0)} chips (already deducted).\nUser notified.`,
+            `✅ Withdrawal #${txId} marked done.\n${parseFloat(existing.amount).toFixed(0)} USD (already deducted).\nUser notified.`,
             { reply_markup: adminWithdrawalMenu() },
           );
         } catch (e) {
@@ -551,7 +551,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         return;
       }
 
-      // Deposits: ask admin how many chips to credit
+      // Deposits: ask admin how many USD to credit
       sess.pendingTxId = txId;
       sess.step = "approve_chips";
       const depUser = await getUserById(existing.userId);
@@ -560,7 +560,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
           `User: ${depUser?.username ? `@${depUser.username}` : depUser?.telegramId ?? "?"}\n` +
           `Crypto: ${existing.crypto?.toUpperCase() ?? "N/A"} ${existing.cryptoAmount ?? ""}\n` +
           `Hash: \`${(existing.txHash ?? "").slice(0, 24)}...\`\n\n` +
-          `How many chips to add? (enter number):`,
+          `How many USD to add? (enter number):`,
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -577,7 +577,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
             if (before.type === "withdrawal") {
               await notifyCasinoUser(
                 user.telegramId,
-                `❌ *Withdrawal Rejected*\n\n#${txId} — ${parseFloat(before.amount).toFixed(0)} chips\nChips have been refunded to your balance.`,
+                `❌ *Withdrawal Rejected*\n\n#${txId} — ${parseFloat(before.amount).toFixed(0)} USD\nUSD has been refunded to your balance.`,
               );
             } else if (before.type === "deposit") {
               await notifyCasinoUser(
@@ -606,7 +606,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       const addrs = await getAllDepositAddresses();
       let msg = "💱 *Crypto Deposit Addresses*\n\n";
       for (const a of addrs) {
-        msg += `${a.isActive ? "✅" : "❌"} *${a.label}*\n\`${a.address}\`\nRate: ${a.chipsPerUnit} chips/unit\n\n`;
+        msg += `${a.isActive ? "✅" : "❌"} *${a.label}*\n\`${a.address}\`\nRate: ${a.chipsPerUnit} USD/unit\n\n`;
       }
       if (addrs.length === 0) msg += "No addresses configured yet.\n\nSet your wallet addresses for each crypto:";
       const keyboard = CRYPTO_OPTIONS.map(c => ([{
@@ -640,7 +640,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data === "admin_add_chips") {
       sess.step = "add_chips_user";
       await ctx.editMessageText(
-        "➕ *Add / Give Chips*\n\nEnter the user's Telegram ID:",
+        "➕ *Add / Give USD*\n\nEnter the user's Telegram ID:",
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -649,7 +649,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data === "admin_remove_chips") {
       sess.step = "remove_chips_user";
       await ctx.editMessageText(
-        "➖ *Remove Chips*\n\nEnter the user's Telegram ID:",
+        "➖ *Remove USD*\n\nEnter the user's Telegram ID:",
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -664,7 +664,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       await ctx.editMessageText(
         `📊 *Stats*\n\n` +
         `👥 Users: *${stats.totalUsers}*\n` +
-        `💰 Chips: *${stats.totalChips.toFixed(0)}*\n` +
+        `💰 USD: *${stats.totalChips.toFixed(0)}*\n` +
         `🎮 Games: *${stats.totalGames}*\n` +
         `⏳ Pending TX: *${stats.pendingTx}*`,
         {
@@ -723,7 +723,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.step = "add_chips_amount";
       const user = await getUserByTgId(uid);
       await ctx.editMessageText(
-        `➕ *Credit Chips*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many chips to *add*?`,
+        `➕ *Credit USD*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many USD to *add*?`,
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -735,7 +735,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.step = "remove_chips_amount";
       const user = await getUserByTgId(uid);
       await ctx.editMessageText(
-        `➖ *Debit Chips*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many chips to *remove*?`,
+        `➖ *Debit USD*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many USD to *remove*?`,
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -779,7 +779,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
     if (data === "admin_bonus_history") {
       await ctx.editMessageText(
-        "🎁 *Bonus History*\n\nBonus tracking coming soon!\n\nFor now, use the Add Chips option to give bonuses to users.",
+        "🎁 *Bonus History*\n\nBonus tracking coming soon!\n\nFor now, use the Add USD option to give bonuses to users.",
         {
           parse_mode: "Markdown",
           reply_markup: {
@@ -830,7 +830,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       return;
     }
 
-    // ── Approve TX: chips amount ────────────────────────────────────────────
+    // ── Approve TX: USD amount ────────────────────────────────────────────
     if (sess.step === "approve_chips" && sess.pendingTxId) {
       const chips = parseFloat(text);
       if (isNaN(chips) || chips <= 0) {
@@ -845,11 +845,11 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         if (user && (tx.type === "deposit" || tx.type === "admin_credit")) {
           await notifyCasinoUser(
             user.telegramId,
-            `✅ *Deposit Approved!*\n\n#${tx.id}\n🎰 *${chips} chips* credited to your balance.\n\nHappy playing! 🎲`,
+            `✅ *Deposit Approved!*\n\n#${tx.id}\n🎰 *${chips} USD* credited to your balance.\n\nHappy playing! 🎲`,
           );
         }
         await ctx.reply(
-          `✅ TX #${tx.id} approved!\n${chips} chips added.\nUser notified.`,
+          `✅ TX #${tx.id} approved!\n${chips} USD added.\nUser notified.`,
           { reply_markup: adminMenu() },
         );
       } catch (e) {
@@ -868,7 +868,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.pendingUserId = user.telegramId;
       sess.step = "add_chips_amount";
       await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nBalance: ${parseFloat(user.chips).toFixed(0)} Chips\n\nHow many chips to add?`,
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to add?`,
       );
       return;
     }
@@ -879,16 +879,16 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         await ctx.reply("❌ Please enter a valid number.");
         return;
       }
-      await addChips(sess.pendingUserId, amount, "admin_credit", `Admin added ${amount} chips`);
+      await addChips(sess.pendingUserId, amount, "admin_credit", `Admin added ${amount} USD`);
       const creditedId = sess.pendingUserId;
       sess.step = undefined;
       delete sess.pendingUserId;
       await notifyCasinoUser(
         creditedId,
-        `🎁 *Chips Credited!*\n\nAdmin added *${amount} chips* to your balance.`,
+        `🎁 *USD Credited!*\n\nAdmin added *${amount} USD* to your balance.`,
       );
       const detail = await buildUserDetail(creditedId);
-      await ctx.reply(`✅ ${amount} chips credited. User notified.`, {
+      await ctx.reply(`✅ ${amount} USD credited. User notified.`, {
         parse_mode: "Markdown",
         reply_markup: detail
           ? { inline_keyboard: detail.keyboard }
@@ -907,7 +907,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.pendingUserId = user.telegramId;
       sess.step = "remove_chips_amount";
       await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nBalance: ${parseFloat(user.chips).toFixed(0)} Chips\n\nHow many chips to remove?`,
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to remove?`,
       );
       return;
     }
@@ -919,7 +919,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         return;
       }
       try {
-        await deductChips(sess.pendingUserId, amount, "admin_debit", `Admin removed ${amount} chips`);
+        await deductChips(sess.pendingUserId, amount, "admin_debit", `Admin removed ${amount} USD`);
       } catch (e) {
         await ctx.reply(`❌ ${String(e)}`);
         return;
@@ -929,10 +929,10 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       delete sess.pendingUserId;
       await notifyCasinoUser(
         debitedId,
-        `⚠️ *Chips Debited*\n\nAdmin removed *${amount} chips* from your balance.`,
+        `⚠️ *USD Debited*\n\nAdmin removed *${amount} USD* from your balance.`,
       );
       const detail = await buildUserDetail(debitedId);
-      await ctx.reply(`✅ ${amount} chips debited. User notified.`, {
+      await ctx.reply(`✅ ${amount} USD debited. User notified.`, {
         parse_mode: "Markdown",
         reply_markup: detail
           ? { inline_keyboard: detail.keyboard }
@@ -983,7 +983,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.pendingAddr = text;
       sess.step = "set_addr_rate";
       await ctx.reply(
-        `✅ Address: \`${text}\`\n\n1 ${sess.pendingCrypto.toUpperCase()} = how many chips? (e.g.: 100)\n\nFor USDT: enter 1 (1 USDT = 1 chip)`,
+        `✅ Address: \`${text}\`\n\n1 ${sess.pendingCrypto.toUpperCase()} = how many USD? (e.g.: 100)\n\nFor USDT: enter 1 (1 USDT = 1 USD)`,
         { parse_mode: "Markdown" },
       );
       return;
@@ -1003,7 +1003,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       delete sess.pendingAddr;
       await upsertDepositAddress(crypto, opt?.label ?? crypto, address, opt?.network ?? crypto, 1, rate);
       await ctx.reply(
-        `✅ *${opt?.label} address saved!*\nAddress: \`${address}\`\nRate: ${rate} chips/unit`,
+        `✅ *${opt?.label} address saved!*\nAddress: \`${address}\`\nRate: ${rate} USD/unit`,
         { parse_mode: "Markdown", reply_markup: adminMenu() },
       );
       return;

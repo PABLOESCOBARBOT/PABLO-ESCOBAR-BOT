@@ -12,7 +12,7 @@ import {
 import { eq, sql, desc, and, gte } from "drizzle-orm";
 
 class InsufficientChipsError extends Error {
-  constructor(message = "Insufficient chips") {
+  constructor(message = "Insufficient USD") {
     super(message);
     this.name = "InsufficientChipsError";
   }

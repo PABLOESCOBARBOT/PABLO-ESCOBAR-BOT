@@ -45,13 +45,13 @@ export function mainMenu(): InlineKeyboardMarkup {
 }
 
 /** Home menu message body (Pablo branding, DiceGamble-style layout). */
-export function homeMenuText(chips: number, firstName?: string): string {
+export function homeMenuText(balance: number, firstName?: string): string {
   const hi = firstName ? `Hey ${firstName}!\n` : "";
   return (
     `${hi}Enjoy the games!\n\n` +
     `🏠 *Menu*\n` +
-    `Your balance: *$${chips.toFixed(2)}* (*${chips.toFixed(0)} Chips*)\n\n` +
-    `1 Chip = $1 · Withdrawals in *LTC*\n` +
+    `Your balance: *$${balance.toFixed(2)} USD*\n\n` +
+    `Withdrawals in *LTC*\n` +
     `Choose the action:`
   );
 }
@@ -100,18 +100,18 @@ export function betMenu(prefix: string): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [
-        { text: "1 💰", callback_data: `${prefix}_bet_1` },
-        { text: "5 💰", callback_data: `${prefix}_bet_5` },
-        { text: "10 💰", callback_data: `${prefix}_bet_10` },
+        { text: "$1", callback_data: `${prefix}_bet_1` },
+        { text: "$5", callback_data: `${prefix}_bet_5` },
+        { text: "$10", callback_data: `${prefix}_bet_10` },
       ],
       [
-        { text: "50 💰", callback_data: `${prefix}_bet_50` },
-        { text: "100 💰", callback_data: `${prefix}_bet_100` },
-        { text: "500 💰", callback_data: `${prefix}_bet_500` },
+        { text: "$50", callback_data: `${prefix}_bet_50` },
+        { text: "$100", callback_data: `${prefix}_bet_100` },
+        { text: "$500", callback_data: `${prefix}_bet_500` },
       ],
       [
-        { text: "1000 💰", callback_data: `${prefix}_bet_1000` },
-        { text: "All In 🎲", callback_data: `${prefix}_bet_allin` },
+        { text: "$1000", callback_data: `${prefix}_bet_1000` },
+        { text: "All In", callback_data: `${prefix}_bet_allin` },
       ],
       [{ text: "🔙 Back", callback_data: "menu_games" }],
     ],
@@ -255,7 +255,7 @@ export function withdrawMenu(addresses: { crypto: string; label: string }[]): In
   return { inline_keyboard: rows };
 }
 
-/** Withdraw amount picker — amounts are chips (= USD) */
+/** Withdraw amount picker — amounts are USD */
 export function withdrawAmountMenu(crypto: string, balance: number): InlineKeyboardMarkup {
   const opts = [5, 10, 20, 50, 100, 500].filter((n) => n <= balance);
   const rows: Array<Array<{ text: string; callback_data: string }>> = [];
@@ -347,8 +347,8 @@ export function adminUsersMenu(): InlineKeyboardMarkup {
         { text: "🔍 Find User", callback_data: "admin_find_user" },
       ],
       [
-        { text: "➕ Credit Chips", callback_data: "admin_add_chips" },
-        { text: "➖ Debit Chips", callback_data: "admin_remove_chips" },
+        { text: "➕ Credit USD", callback_data: "admin_add_chips" },
+        { text: "➖ Debit USD", callback_data: "admin_remove_chips" },
       ],
       [
         { text: "🚫 Ban User", callback_data: "admin_ban_user" },
@@ -367,7 +367,7 @@ export function adminDepositMenu(): InlineKeyboardMarkup {
         { text: "💱 Crypto Addresses", callback_data: "admin_addresses" },
       ],
       [
-        { text: "➕ Add Chips (User)", callback_data: "admin_add_chips" },
+        { text: "➕ Add USD (User)", callback_data: "admin_add_chips" },
         { text: "🏦 Payment Settings", callback_data: "admin_payment_settings" },
       ],
       [{ text: "🔙 Back", callback_data: "admin_back" }],
@@ -384,7 +384,7 @@ export function adminWithdrawalMenu(): InlineKeyboardMarkup {
         { text: "✅ Approved Today", callback_data: "admin_approved_withdrawals" },
       ],
       [
-        { text: "➖ Deduct Chips (User)", callback_data: "admin_remove_chips" },
+        { text: "➖ Deduct USD (User)", callback_data: "admin_remove_chips" },
       ],
       [{ text: "🔙 Back", callback_data: "admin_back" }],
     ],

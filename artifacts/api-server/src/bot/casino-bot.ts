@@ -147,7 +147,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   async function handleStartPayload(ctx: BotContext, tgId: string, payload: string): Promise<void> {
     if (payload === "balance") {
       const chips = await getChips(tgId);
-      await ctx.reply(`💰 *Your Balance*\n\n${chips.toFixed(0)} Chips`, {
+      await ctx.reply(`💰 *Your Balance*\n\n${chips.toFixed(0)} USD`, {
         parse_mode: "Markdown", reply_markup: mainMenu(),
       });
       return;
@@ -228,7 +228,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     // Balance in group — show inline (no private redirect)
     const chips = await getChips(tgId);
     await ctx.reply(
-      `💰 *${ctx.from!.first_name}'s Balance*\n\n${chips.toFixed(0)} Chips ($${chips.toFixed(0)})`,
+      `💰 *${ctx.from!.first_name}'s Balance*\n\n${chips.toFixed(0)} USD ($${chips.toFixed(0)})`,
       { parse_mode: "Markdown" },
     );
   });
@@ -363,9 +363,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const chips = await getChips(tgId);
       return ctx.editMessageText(
         `⚙️ *Settings*\n\n` +
-          `Balance: *$${chips.toFixed(2)}* (${chips.toFixed(0)} Chips)\n` +
+          `Balance: *$${chips.toFixed(2)}* (${chips.toFixed(0)} USD)\n` +
           `Withdraw coin: *LTC only*\n` +
-          `1 Chip = $1`,
+          `Balance shown in USD`,
         {
           parse_mode: "Markdown",
           reply_markup: {
@@ -397,7 +397,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     if (data === "balance") {
       const chips = await getChips(tgId);
       return ctx.editMessageText(
-        `💰 *Your Balance*\n\n*${chips.toFixed(0)} Chips*`,
+        `💰 *Your Balance*\n\n*${chips.toFixed(0)} USD*`,
         { parse_mode: "Markdown", reply_markup: mainMenu() },
       );
     }
@@ -428,7 +428,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const crypto = data.replace(/^deposit_(np|cp)_/, "");
       // Ask for amount (min $5)
       return ctx.editMessageText(
-        `💵 *Select deposit amount*\n\nMin: *$5* → 5 Chips\n1 Chip = $1`,
+        `💵 *Select deposit amount*\n\nMin: *$5 USD*\nBalance shown in USD`,
         { parse_mode: "Markdown", reply_markup: depositAmountMenu(crypto) },
       );
     }
@@ -483,8 +483,8 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const bal = await getChips(tgId);
       return ctx.editMessageText(
         `✏️ <b>Custom Withdraw — ${crypto.toUpperCase()}</b>\n\n` +
-          `Balance: <b>${bal.toFixed(0)} Chips</b>\nMin: <b>$5</b>\n\n` +
-          `Type how many chips to withdraw:`,
+          `Balance: <b>${bal.toFixed(0)} USD</b>\nMin: <b>$5</b>\n\n` +
+          `Type how many USD to withdraw:`,
         { parse_mode: "HTML" },
       );
     }
@@ -566,10 +566,10 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const chips = await getChips(tgId);
       const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
       if (bet <= 0 || chips < bet) {
-        return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+        return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
       }
       return ctx.editMessageText(
-        `🎡 *Roulette — Bet: ${bet} Chips*\n\nWhere do you want to place your bet?`,
+        `🎡 *Roulette — Bet: ${bet} USD*\n\nWhere do you want to place your bet?`,
         { parse_mode: "Markdown", reply_markup: rouletteChoiceMenu(bet) },
       );
     }
@@ -645,7 +645,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const chipsPerUnit = cryptoAddr ? parseFloat(cryptoAddr.chipsPerUnit) : 1;
       const estimatedChips = amount * chipsPerUnit;
       if (estimatedChips < 5) {
-        await ctx.reply(`❌ Minimum deposit is *$5 (5 Chips)*.\n\nYour amount would give ${estimatedChips.toFixed(2)} Chips.`, { parse_mode: "Markdown" });
+        await ctx.reply(`❌ Minimum deposit is *$5 USD*.\n\nYour amount would give ${estimatedChips.toFixed(2)} USD.`, { parse_mode: "Markdown" });
         return;
       }
       sess.awaitingDepositAmount = false;
@@ -655,7 +655,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         const walletAddress = cryptoAddr?.address ?? "unknown";
         const tx = await createDepositRequest(tgId, crypto, text, hash, walletAddress);
         await ctx.reply(
-          `📥 *Deposit Request Submitted!*\n\nID: #${tx.id}\nCrypto: ${crypto.toUpperCase()}\nAmount: ${amount} → ~${estimatedChips.toFixed(0)} Chips 💰\n\n💵 Rate: 1 Chip = $1 USD\n\nAdmin will verify and credit your chips. 🙏`,
+          `📥 *Deposit Request Submitted!*\n\nID: #${tx.id}\nCrypto: ${crypto.toUpperCase()}\nAmount: ${amount} → ~${estimatedChips.toFixed(0)} USD 💰\n\n💵 Rate: Balance shown in USD\n\nAdmin will verify and credit your USD. 🙏`,
           { parse_mode: "Markdown", reply_markup: mainMenu() },
         );
       } catch {
@@ -666,15 +666,15 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     if (sess.awaitingWithdrawAmount) {
       const chips = parseInt(text, 10);
-      if (isNaN(chips) || chips <= 0) { await ctx.reply("❌ Please enter a valid chip amount"); return; }
-      if (chips < 5) { await ctx.reply("❌ Minimum withdrawal is <b>$5 (5 Chips)</b>.", { parse_mode: "HTML" }); return; }
+      if (isNaN(chips) || chips <= 0) { await ctx.reply("❌ Please enter a valid USD amount"); return; }
+      if (chips < 5) { await ctx.reply("❌ Minimum withdrawal is <b>$5 USD</b>.", { parse_mode: "HTML" }); return; }
       const balance = await getChips(tgId);
-      if (chips > balance) { await ctx.reply(`❌ Insufficient chips. Balance: ${balance.toFixed(0)}`); return; }
+      if (chips > balance) { await ctx.reply(`❌ Insufficient USD. Balance: ${balance.toFixed(0)}`); return; }
       sess.awaitingWithdrawAmount = false;
       sess.awaitingWithdrawAddress = true;
       sess.withdrawChips = chips;
       await ctx.reply(
-        `✅ Amount: <b>${chips} Chips ($${chips})</b>\n\n` +
+        `✅ Amount: <b>${chips} USD ($${chips})</b>\n\n` +
           `Now paste your <b>${sess.awaitingWithdrawCrypto?.toUpperCase()}</b> wallet address:`,
         { parse_mode: "HTML" },
       );
@@ -693,10 +693,10 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       sess.pendingWithdrawAddress = address;
       await ctx.reply(
         `📤 <b>Confirm Withdrawal</b>\n\n` +
-          `Amount: <b>${chips} Chips ($${chips})</b>\n` +
+          `Amount: <b>${chips} USD ($${chips})</b>\n` +
           `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
           `Address:\n<code>${address}</code>\n\n` +
-          `⚠️ Chips will be locked until admin pays or rejects.`,
+          `⚠️ USD will be locked until admin pays or rejects.`,
         { parse_mode: "HTML", reply_markup: withdrawConfirmMenu(crypto) },
       );
       return;
@@ -721,7 +721,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   async function handleMyStats(ctx: BotContext, tgId: string) {
     const chips = await getChips(tgId);
     const games = await getRecentGames(tgId, 5);
-    let statsText = `📊 *Your Stats*\n\n💰 Balance: *${chips.toFixed(0)} Chips*\n\n🎮 *Last 5 Games:*\n`;
+    let statsText = `📊 *Your Stats*\n\n💰 Balance: *${chips.toFixed(0)} USD*\n\n🎮 *Last 5 Games:*\n`;
     if (games.length === 0) {
       statsText += "No games played yet!";
     } else {
@@ -754,9 +754,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
 
     const text =
-      "📥 *Deposit Chips*\n\n" +
+      "📥 *Deposit*\n\n" +
       "Select a cryptocurrency:\n" +
-      "💵 Min deposit: *$5* (5 Chips)\n" +
+      "💵 Min deposit: *$5 USD*\n" +
       (npOn ? "⚡ Auto credit via NOWPayments\n" : "");
 
     const markup = depositMenu(options, { showManualConfirm: addresses.length > 0 && !npOn });
@@ -789,7 +789,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       rows.push([{ text: "🔙 Back", callback_data: "menu_deposit" }]);
 
       return ctx.editMessageText(
-        `📥 *Deposit — ${label}*\n\n💵 Min: *$5* | 1 Chip = $1\n\nChoose method:`,
+        `📥 *Deposit — ${label}*\n\n💵 Min: *$5* | Balance shown in USD\n\nChoose method:`,
         { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } },
       );
     }
@@ -802,7 +802,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     return ctx.editMessageText(
       `📥 <b>Manual Deposit — ${label}</b>\n\n` +
         `Network: ${addr.network ?? label}\n` +
-        `Min: <b>$5</b> (5 Chips)\n\n` +
+        `Min: <b>$5</b> (5 USD)\n\n` +
         `📬 Send to this address:\n<code>${addr.address}</code>\n\n` +
         `After sending, tap Confirm and paste your TX hash.`,
       {
@@ -884,13 +884,13 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
         await ctx.editMessageText(
           `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-            `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} Chips</b>\n` +
+            `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} USD</b>\n` +
             `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
             `📬 Address:\n<code>${payAddress}</code>\n\n` +
             `Network: ${payment.network ?? addr?.network ?? payCurrency}\n` +
             `Payment ID: <code>${paymentId}</code>\n` +
             `Deposit ID: #${tx.id}\n\n` +
-            `✅ Chips credit automatically after confirmation.`,
+            `✅ USD credit automatically after confirmation.`,
           {
             parse_mode: "HTML",
             reply_markup: {
@@ -920,12 +920,12 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
       await ctx.editMessageText(
         `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-          `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} Chips</b>\n\n` +
+          `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} USD</b>\n\n` +
           `👇 Tap <b>Pay Now</b> — the deposit <b>address</b> will open on NOWPayments.\n` +
           `Send the exact amount shown there.\n\n` +
           `Invoice: <code>${invoiceId}</code>\n` +
           `Deposit ID: #${tx.id}\n\n` +
-          `✅ After payment, chips credit automatically.`,
+          `✅ After payment, USD credit automatically.`,
         {
           parse_mode: "HTML",
           reply_markup: {
@@ -998,7 +998,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       try {
         await approveTransaction(tx.id, chips);
         await ctx.editMessageText(
-          `✅ <b>Payment Confirmed!</b>\n\n🎰 <b>${chips} chips</b> added.\nDeposit #${tx.id}`,
+          `✅ <b>Payment Confirmed!</b>\n\n🎰 <b>${chips} USD</b> added.\nDeposit #${tx.id}`,
           { parse_mode: "HTML", reply_markup: mainMenu() },
         );
       } catch (e) {
@@ -1029,7 +1029,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     const text =
       `📤 <b>Withdraw Winnings</b>\n\n` +
-      `💰 Balance: <b>${bal.toFixed(0)} Chips</b> ($${bal.toFixed(0)})\n` +
+      `💰 Balance: <b>${bal.toFixed(0)} USD</b> ($${bal.toFixed(0)})\n` +
       `⏳ Pending withdrawals: <b>${pending}</b>\n` +
       `💵 Min withdraw: <b>$5</b>\n` +
       `🪙 Payout coin: <b>Litecoin (LTC) only</b>\n\n` +
@@ -1051,7 +1051,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     const chips = await getChips(tgId);
     if (chips < 5) {
-      return ctx.answerCbQuery("❌ Minimum withdrawal is $5. Win more chips first!", { show_alert: true });
+      return ctx.answerCbQuery("❌ Minimum withdrawal is $5. Win more USD first!", { show_alert: true });
     }
     ctx.session.awaitingWithdrawCrypto = crypto;
     delete ctx.session.awaitingWithdrawAmount;
@@ -1062,7 +1062,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const label = DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
     return ctx.editMessageText(
       `📤 <b>Withdraw — ${label}</b>\n\n` +
-        `💰 Balance: <b>${chips.toFixed(0)} Chips</b>\n` +
+        `💰 Balance: <b>${chips.toFixed(0)} USD</b>\n` +
         `Min: <b>$5</b>\n\n` +
         `Select amount:`,
       { parse_mode: "HTML", reply_markup: withdrawAmountMenu(crypto, chips) },
@@ -1084,7 +1084,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return ctx.answerCbQuery("❌ Minimum withdrawal is $5", { show_alert: true });
     }
     if (chips > bal) {
-      return ctx.answerCbQuery(`❌ Insufficient chips. Balance: ${bal.toFixed(0)}`, { show_alert: true });
+      return ctx.answerCbQuery(`❌ Insufficient USD. Balance: ${bal.toFixed(0)}`, { show_alert: true });
     }
 
     ctx.session.awaitingWithdrawCrypto = crypto;
@@ -1095,7 +1095,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const label = DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
     return ctx.editMessageText(
       `📤 <b>Withdraw — ${label}</b>\n\n` +
-        `Amount: <b>${chips} Chips ($${chips})</b>\n\n` +
+        `Amount: <b>${chips} USD ($${chips})</b>\n\n` +
         `Paste your <b>${label}</b> wallet address:`,
       { parse_mode: "HTML" },
     );
@@ -1122,7 +1122,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       await deductChips(tgId, chips, "withdrawal_pending", `Withdrawal to ${address}`);
     } catch (e) {
       if (e instanceof InsufficientChipsError) {
-        return ctx.answerCbQuery("❌ Insufficient chips", { show_alert: true });
+        return ctx.answerCbQuery("❌ Insufficient USD", { show_alert: true });
       }
       throw e;
     }
@@ -1141,7 +1141,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       `📤 <b>New Withdrawal Request</b>\n\n` +
         `ID: <b>#${tx.id}</b>\n` +
         `User: ${uname} (<code>${tgId}</code>)\n` +
-        `Amount: <b>${chips} Chips ($${chips})</b>\n` +
+        `Amount: <b>${chips} USD ($${chips})</b>\n` +
         `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
         `Address:\n<code>${address}</code>\n\n` +
         `Send crypto, then tap Paid.`,
@@ -1162,11 +1162,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     return ctx.editMessageText(
       `✅ <b>Withdrawal Submitted!</b>\n\n` +
         `Request ID: <b>#${tx.id}</b>\n` +
-        `Amount: <b>${chips} Chips ($${chips})</b>\n` +
+        `Amount: <b>${chips} USD ($${chips})</b>\n` +
         `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
         `Address:\n<code>${address}</code>\n\n` +
-        `🔒 Chips locked. Admin will pay soon.\n` +
-        `💼 Remaining balance: <b>${newBal.toFixed(0)} Chips</b>`,
+        `🔒 USD locked. Admin will pay soon.\n` +
+        `💼 Remaining balance: <b>${newBal.toFixed(0)} USD</b>`,
       {
         parse_mode: "HTML",
         reply_markup: {
@@ -1217,11 +1217,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     try {
       const tx = await cancelUserWithdrawal(tgId, txId);
       const bal = await getChips(tgId);
-      await ctx.answerCbQuery("✅ Cancelled — chips refunded", { show_alert: true });
+      await ctx.answerCbQuery("✅ Cancelled — USD refunded", { show_alert: true });
       return ctx.editMessageText(
         `❌ Withdrawal <b>#${tx.id}</b> cancelled.\n` +
-          `💸 <b>${parseFloat(tx.amount).toFixed(0)} chips</b> refunded.\n` +
-          `💼 Balance: <b>${bal.toFixed(0)} Chips</b>`,
+          `💸 <b>${parseFloat(tx.amount).toFixed(0)} USD</b> refunded.\n` +
+          `💼 Balance: <b>${bal.toFixed(0)} USD</b>`,
         {
           parse_mode: "HTML",
           reply_markup: {
@@ -1245,7 +1245,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
 
     if (bet <= 0 || chips < bet) {
-      return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+      return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
     }
 
     // Show spinning message
@@ -1271,7 +1271,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     await recordGame(tgId, "slots", bet, payout, gameResult, { reels: result.reels, multiplier: result.multiplier });
     const newBal = await getChips(tgId);
-    const msg = `${result.display}\n\nBet: ${bet} 💰\n${result.multiplier > 0 ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+    const msg = `${result.display}\n\nBet: ${bet} 💰\n${result.multiplier > 0 ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
     return ctx.reply(msg, { reply_markup: playAgainMenu("slots") });
   }
@@ -1284,7 +1284,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const betType = parts[parts.length - 2]! as DiceBetType;
 
     const chips = await getChips(tgId);
-    if (chips < bet) return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+    if (chips < bet) return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
 
     // Show rolling message
     await ctx.editMessageText(`🎲 *Rolling the dice...*`, { parse_mode: "Markdown" });
@@ -1310,7 +1310,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     await recordGame(tgId, "dice", bet, payout, gameResult, { dice1: result.dice1, dice2: result.dice2 });
     const newBal = await getChips(tgId);
-    const msg = `${result.display}\n\nBet: ${bet} 💰\n${result.won ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+    const msg = `${result.display}\n\nBet: ${bet} 💰\n${result.won ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
     return ctx.reply(msg, {
       parse_mode: "Markdown",
@@ -1326,7 +1326,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const side = parts[parts.length - 2]! as CoinSide;
 
     const chips = await getChips(tgId);
-    if (chips < bet) return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+    if (chips < bet) return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
 
     // Show flipping message
     await ctx.editMessageText(`🪙 *Flipping the coin...*`, { parse_mode: "Markdown" });
@@ -1350,7 +1350,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     await recordGame(tgId, "coinflip", bet, payout, gameResult, { result: result.result });
     const newBal = await getChips(tgId);
-    const msg = `${result.display}\n\nBet: ${bet} 💰\n${result.won ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+    const msg = `${result.display}\n\nBet: ${bet} 💰\n${result.won ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
     return ctx.reply(msg, { reply_markup: playAgainMenu("coinflip") });
   }
@@ -1363,7 +1363,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
 
     if (bet <= 0 || chips < bet) {
-      return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+      return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
     }
 
     await deductChips(tgId, bet, "game_loss", "BJ bet");
@@ -1393,7 +1393,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
       const msg =
         formatBJState(state, false) +
-        `\n\nBet: ${bet} 💰\n${gameResult === "win" ? `Win: +${payout.toFixed(0)} 💰` : gameResult === "push" ? "Draw — refund!" : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+        `\n\nBet: ${bet} 💰\n${gameResult === "win" ? `Win: +${payout.toFixed(0)} 💰` : gameResult === "push" ? "Draw — refund!" : `Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
       return ctx.editMessageText(msg, {
         parse_mode: "Markdown",
@@ -1417,7 +1417,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     if (action === "double") {
       const chips = await getChips(tgId);
       if (chips < sess.bjBet) {
-        return ctx.answerCbQuery("❌ Not enough chips to double!", { show_alert: true });
+        return ctx.answerCbQuery("❌ Not enough USD to double!", { show_alert: true });
       }
       await deductChips(tgId, sess.bjBet, "game_loss", "BJ double");
       sess.bjBet *= 2;
@@ -1445,7 +1445,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const newBal = await getChips(tgId);
       const msg =
         formatBJState(newState, false) +
-        `\n\nBet: ${sess.bjBet} 💰\n${gameResult === "win" ? `Win: +${payout.toFixed(0)} 💰` : gameResult === "push" ? "Draw — refund!" : `Loss: -${sess.bjBet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+        `\n\nBet: ${sess.bjBet} 💰\n${gameResult === "win" ? `Win: +${payout.toFixed(0)} 💰` : gameResult === "push" ? "Draw — refund!" : `Loss: -${sess.bjBet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
       delete sess.bjState;
       delete sess.bjBet;
@@ -1470,7 +1470,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const type = parts[1]!;
 
     const chips = await getChips(tgId);
-    if (chips < bet) { await ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true }); return; }
+    if (chips < bet) { await ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true }); return; }
 
     if (type === "num" && value === "pick") {
       ctx.session.awaitingRouletteNumber = bet;
@@ -1494,7 +1494,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
   async function handleRouletteResult(ctx: BotContext, tgId: string, bet: RouletteBet, betAmt: number): Promise<void> {
     const chips = await getChips(tgId);
-    if (chips < betAmt) { await ctx.reply("❌ Insufficient chips!"); return; }
+    if (chips < betAmt) { await ctx.reply("❌ Insufficient USD!"); return; }
 
     await deductChips(tgId, betAmt, "game_loss", "Roulette bet");
     const result = playRoulette(bet);
@@ -1509,7 +1509,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     await recordGame(tgId, "roulette", betAmt, payout, gameResult, { number: result.number, color: result.color });
     const newBal = await getChips(tgId);
-    const msg = `${result.display}\n\nBet: ${betAmt} 💰\n${result.won ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${betAmt} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+    const msg = `${result.display}\n\nBet: ${betAmt} 💰\n${result.won ? `Win: +${payout.toFixed(0)} 💰` : `Loss: -${betAmt} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
     await ctx.reply(msg, { reply_markup: playAgainMenu("roulette") });
   }
@@ -1522,14 +1522,14 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
 
     if (bet <= 0 || chips < bet) {
-      await ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+      await ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
       return;
     }
 
     const key = `${tgId}_crash`;
     const existing = activeCrash.get(key);
     if (existing) {
-      // Refund abandoned round so chips aren't lost
+      // Refund abandoned round so USD aren't lost
       clearInterval(existing.interval);
       activeCrash.delete(key);
       await addChips(tgId, existing.bet, "game_win", "Crash abandoned refund");
@@ -1539,7 +1539,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const crashPoint = generateCrashPoint();
 
     await ctx.editMessageText(
-      `📈 *Crash Game* — Bet: ${bet} Chips\n\n` +
+      `📈 *Crash Game* — Bet: ${bet} USD\n\n` +
       `${buildCrashBar(1.0)} 1.00x\n\n` +
       `⏳ Starting...`,
       {
@@ -1576,7 +1576,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
             chatId,
             messageId!,
             undefined,
-            `📈 *Crash Game*\n\n💥 CRASHED at ${crashPoint}x!\n\nBet: ${bet} 💰\nLoss: -${bet} 💰\n💼 Balance: ${newBal.toFixed(0)} Chips`,
+            `📈 *Crash Game*\n\n💥 CRASHED at ${crashPoint}x!\n\nBet: ${bet} 💰\nLoss: -${bet} 💰\n💼 Balance: ${newBal.toFixed(0)} USD`,
             { parse_mode: "Markdown", reply_markup: playAgainMenu("crash") },
           );
         } catch { /* already edited */ }
@@ -1588,7 +1588,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
           chatId,
           messageId!,
           undefined,
-          `📈 *Crash Game* — Bet: ${bet} Chips\n\n` +
+          `📈 *Crash Game* — Bet: ${bet} USD\n\n` +
           `${buildCrashBar(gameState.current)} ${gameState.current.toFixed(2)}x\n\n` +
           `💸 Cash out or keep going!`,
           { parse_mode: "Markdown", reply_markup: crashMenu(bet) },
@@ -1623,7 +1623,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const newBal = await getChips(tgId);
 
     return ctx.editMessageText(
-      `📈 *Crash Game*\n\nCashed out at: ${cashedOutAt}x\nCrash was at: ${crashPoint}x\n\nBet: ${bet} 💰\n${result.won ? `✅ Win: +${payout.toFixed(0)} 💰` : `❌ Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} Chips`,
+      `📈 *Crash Game*\n\nCashed out at: ${cashedOutAt}x\nCrash was at: ${crashPoint}x\n\nBet: ${bet} 💰\n${result.won ? `✅ Win: +${payout.toFixed(0)} 💰` : `❌ Loss: -${bet} 💰`}\n💼 Balance: ${newBal.toFixed(0)} USD`,
       { parse_mode: "Markdown", reply_markup: playAgainMenu("crash") },
     );
   }
@@ -1636,7 +1636,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const bet = betStr === "allin" ? Math.floor(chips) : parseInt(betStr, 10);
 
     if (bet <= 0 || chips < bet) {
-      return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+      return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
     }
 
     // Show dropping animation
@@ -1654,7 +1654,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const newBal = await getChips(tgId);
 
     const msg =
-      `${result.display}\n\nBet: ${bet} 💰\nPayout: ${payout.toFixed(0)} 💰\n${payout >= bet ? "✅" : "❌"} Net: ${(payout - bet).toFixed(0)} 💰\n💼 Balance: ${newBal.toFixed(0)} Chips`;
+      `${result.display}\n\nBet: ${bet} 💰\nPayout: ${payout.toFixed(0)} 💰\n${payout >= bet ? "✅" : "❌"} Net: ${(payout - bet).toFixed(0)} 💰\n💼 Balance: ${newBal.toFixed(0)} USD`;
 
     return ctx.reply(msg, {
       parse_mode: "Markdown",
@@ -1665,7 +1665,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   // ─── PvP ────────────────────────────────────────────────────────────────
   async function handlePvpChallenge(ctx: BotContext, tgId: string, bet: number): Promise<void> {
     const chips = await getChips(tgId);
-    if (chips < bet) { await ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true }); return; }
+    if (chips < bet) { await ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true }); return; }
 
     const chatId = String(ctx.chat!.id);
     const challenge = await createPvpChallenge(tgId, "coinflip", bet, chatId);
@@ -1675,7 +1675,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const name = user?.username ? `@${user.username}` : user?.firstName ?? "Someone";
 
     await ctx.editMessageText(
-      `⚔️ *PvP Challenge!*\n\n${name} sent a ${bet} Chips challenge!\n\nGame: 🪙 Coin Flip\nBet: ${bet} Chips\n\nAnyone can accept!`,
+      `⚔️ *PvP Challenge!*\n\n${name} sent a ${bet} USD challenge!\n\nGame: 🪙 Coin Flip\nBet: ${bet} USD\n\nAnyone can accept!`,
       { parse_mode: "Markdown", reply_markup: pvpAcceptMenu(challenge.id) },
     );
   }
@@ -1697,7 +1697,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     } catch (e) {
       await reopenPvpChallenge(challengeId);
       if (e instanceof InsufficientChipsError) {
-        return ctx.answerCbQuery("❌ Insufficient chips!", { show_alert: true });
+        return ctx.answerCbQuery("❌ Insufficient USD!", { show_alert: true });
       }
       throw e;
     }
@@ -1720,7 +1720,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const loseName = loser?.username ? `@${loser.username}` : loser?.firstName ?? "Loser";
 
     return ctx.editMessageText(
-      `⚔️ *PvP Result!*\n\n🪙 Coin: ${flip ? "Heads" : "Tails"}\n\n🏆 *${winName}* wins!\n💰 Payout: ${payout.toFixed(0)} Chips\n\n😔 ${loseName} loses.`,
+      `⚔️ *PvP Result!*\n\n🪙 Coin: ${flip ? "Heads" : "Tails"}\n\n🏆 *${winName}* wins!\n💰 Payout: ${payout.toFixed(0)} USD\n\n😔 ${loseName} loses.`,
       { parse_mode: "Markdown" },
     );
   }

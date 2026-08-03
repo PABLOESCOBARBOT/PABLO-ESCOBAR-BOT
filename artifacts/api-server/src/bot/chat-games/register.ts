@@ -140,7 +140,7 @@ async function startSetup(
   const tgId = String(from.id);
   await getOrCreateUser(tgId, from.username, from.first_name, from.last_name);
   if ((await getChips(tgId)) < bet) {
-    await ctx.reply(`Not enough chips. Need *${bet}*.`, { parse_mode: "Markdown" });
+    await ctx.reply(`Not enough USD. Need *${bet}*.`, { parse_mode: "Markdown" });
     return;
   }
 
@@ -208,8 +208,8 @@ async function runMatch(
   } catch (e) {
     const msg =
       e instanceof InsufficientChipsError
-        ? `${g.emoji} Not enough chips — match cancelled.`
-        : `${g.emoji} Could not lock chips — match cancelled.`;
+        ? `${g.emoji} Not enough USD — match cancelled.`
+        : `${g.emoji} Could not lock USD — match cancelled.`;
     await editMsg(bot.telegram, match.chatId, boardId, msg);
     chatStore.delete(match.id);
     return;
@@ -364,10 +364,10 @@ async function runMatch(
   }
 
   const moneyLine = hostWon
-    ? `*${winnerName}* wins · *+${payout}* chips`
+    ? `*${winnerName}* wins · *+${payout}* USD`
     : match.opponent === "bot"
       ? `*Bot* wins · *${match.host.name}* lost ${match.bet}`
-      : `*${winnerName}* wins · *+${payout}* chips`;
+      : `*${winnerName}* wins · *+${payout}* USD`;
 
   const finalMsg =
     `${g.emoji} ${lastRolls}\n` +
@@ -613,7 +613,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           setupText(
             g,
             match,
-            `Confirm? Winner gets *${(match.bet * CHAT_PAYOUT_MULT).toFixed(1)}* chips.`,
+            `Confirm? Winner gets *${(match.bet * CHAT_PAYOUT_MULT).toFixed(1)}* USD.`,
           ),
           confirmKeyboard(matchId),
         );
@@ -695,7 +695,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
         }
         const bal = await getChips(uid);
         if (bal < match.bet) {
-          await ctx.answerCbQuery(`Need ${match.bet} chips`, { show_alert: true });
+          await ctx.answerCbQuery(`Need ${match.bet} USD`, { show_alert: true });
           return;
         }
         match.guest = { userId: uid, name: ctx.from!.first_name ?? "Player" };
