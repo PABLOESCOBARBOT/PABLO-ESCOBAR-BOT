@@ -36,7 +36,7 @@ export function mainMenu(): InlineKeyboardMarkup {
         { text: "💸 Withdraw", callback_data: "menu_withdraw" },
       ],
       [
-        { text: "🎁 Bonuses", callback_data: "menu_bonuses" },
+        { text: "🎁 Referral 5%", callback_data: "menu_referral" },
         { text: "📁 More", callback_data: "menu_more" },
       ],
       [{ text: "⚙️ Settings", callback_data: "menu_settings" }],

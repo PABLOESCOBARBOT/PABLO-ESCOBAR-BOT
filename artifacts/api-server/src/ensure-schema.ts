@@ -67,5 +67,17 @@ export async function ensureSchema(): Promise<void> {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
   `);
+
+  // Referral columns (safe on existing Railway DBs)
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by INTEGER;
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_referral_code_uidx
+      ON users (referral_code)
+      WHERE referral_code IS NOT NULL;
+  `);
+
   logger.info("DB schema ready");
 }

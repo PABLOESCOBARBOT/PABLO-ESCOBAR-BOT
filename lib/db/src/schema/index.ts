@@ -19,6 +19,10 @@ export const usersTable = pgTable("users", {
   lastName: text("last_name"),
   chips: numeric("chips", { precision: 20, scale: 2 }).notNull().default("0"),
   isBanned: boolean("is_banned").notNull().default(false),
+  /** Unique share code for referral deep-links (?start=ref_CODE). */
+  referralCode: text("referral_code").unique(),
+  /** users.id of the referrer — set once when a new user joins via link. */
+  referredBy: integer("referred_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

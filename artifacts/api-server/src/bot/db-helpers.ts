@@ -9,7 +9,7 @@ import {
   type Transaction,
   type DepositAddress,
 } from "@workspace/db";
-import { eq, sql, desc, and, gte } from "drizzle-orm";
+import { eq, sql, desc, and, gte, isNull } from "drizzle-orm";
 
 class InsufficientChipsError extends Error {
   constructor(message = "Insufficient USD") {
@@ -592,12 +592,12 @@ export async function getTransactionById(txId: number): Promise<Transaction | nu
 
 /**
  * Approve a pending transaction.
- * - Deposits: credit chipsAmount to the user
+ * - Deposits: credit chipsAmount to the user + 5% referral bonus to referrer
  * - Withdrawals: chips were already deducted on request — only mark approved
  * Idempotent: refuses if status is no longer pending (blocks double-credit races).
  */
 export async function approveTransaction(txId: number, chipsAmount: number): Promise<Transaction> {
-  return db.transaction(async (tx) => {
+  const approved = await db.transaction(async (tx) => {
     const existingRows = await tx
       .select()
       .from(transactionsTable)
@@ -633,6 +633,17 @@ export async function approveTransaction(txId: number, chipsAmount: number): Pro
 
     return updated[0];
   });
+
+  // After commit: pay referrer 5% of real deposits (not admin credits)
+  if (approved.type === "deposit" && chipsAmount > 0) {
+    try {
+      await creditReferralOnDeposit(approved.userId, chipsAmount, approved.id);
+    } catch (e) {
+      console.error("referral bonus failed", e);
+    }
+  }
+
+  return approved;
 }
 
 /**
@@ -911,4 +922,173 @@ export async function getPvpChallenge(challengeId: number) {
     .where(eq(pvpChallengesTable.id, challengeId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+// ─── Referrals (5% of referred user deposits) ─────────────────────────────────
+
+export const REFERRAL_PERCENT = 5;
+
+function makeReferralCode(userId: number): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let suffix = "";
+  for (let i = 0; i < 4; i++) {
+    suffix += alphabet[Math.floor(Math.random() * alphabet.length)]!;
+  }
+  return `P${userId.toString(36).toUpperCase()}${suffix}`;
+}
+
+/** Ensure the user has a shareable referral code; create one if missing. */
+export async function ensureReferralCode(telegramId: string): Promise<string> {
+  const user = await getUserByTgId(telegramId);
+  if (!user) throw new Error("User not found");
+  if (user.referralCode) return user.referralCode;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = makeReferralCode(user.id);
+    try {
+      const updated = await db
+        .update(usersTable)
+        .set({ referralCode: code, updatedAt: new Date() })
+        .where(and(eq(usersTable.id, user.id), isNull(usersTable.referralCode)))
+        .returning();
+      if (updated[0]?.referralCode) return updated[0].referralCode;
+      // Race: another request set it
+      const again = await getUserById(user.id);
+      if (again?.referralCode) return again.referralCode;
+    } catch {
+      // unique collision — retry
+    }
+  }
+  throw new Error("Could not allocate referral code");
+}
+
+export async function getUserByReferralCode(code: string): Promise<User | null> {
+  const normalized = code.trim().toUpperCase();
+  if (!normalized) return null;
+  const rows = await db
+    .select()
+    .from(usersTable)
+    .where(eq(usersTable.referralCode, normalized))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Attach a referrer to a brand-new user (once). Ignores self-ref / already set.
+ * Returns true if attached.
+ */
+export async function attachReferrer(
+  newUserTelegramId: string,
+  referralCode: string,
+): Promise<{ ok: boolean; referrer?: User; reason?: string }> {
+  const code = referralCode.trim().toUpperCase().replace(/^REF_/, "");
+  if (!code) return { ok: false, reason: "invalid" };
+
+  const newbie = await getUserByTgId(newUserTelegramId);
+  if (!newbie) return { ok: false, reason: "user_missing" };
+  if (newbie.referredBy) return { ok: false, reason: "already_referred" };
+
+  const referrer = await getUserByReferralCode(code);
+  if (!referrer) return { ok: false, reason: "unknown_code" };
+  if (referrer.id === newbie.id || referrer.telegramId === newUserTelegramId) {
+    return { ok: false, reason: "self" };
+  }
+
+  const updated = await db
+    .update(usersTable)
+    .set({ referredBy: referrer.id, updatedAt: new Date() })
+    .where(and(eq(usersTable.id, newbie.id), isNull(usersTable.referredBy)))
+    .returning();
+
+  if (!updated[0]?.referredBy) return { ok: false, reason: "already_referred" };
+  return { ok: true, referrer };
+}
+
+/**
+ * Pay referrer 5% when a referred user completes a deposit.
+ * Idempotent per deposit transaction id.
+ */
+export async function creditReferralOnDeposit(
+  depositorUserId: number,
+  depositUsd: number,
+  depositTxId: number,
+): Promise<{ paid: boolean; bonus?: number; referrerTgId?: string }> {
+  const depositor = await getUserById(depositorUserId);
+  if (!depositor?.referredBy) return { paid: false };
+
+  const bonus = Math.floor(depositUsd * (REFERRAL_PERCENT / 100) * 100) / 100;
+  if (bonus < 0.01) return { paid: false };
+
+  const note = `Referral ${REFERRAL_PERCENT}% from deposit #${depositTxId}`;
+  const already = await db
+    .select({ id: transactionsTable.id })
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.type, "referral_bonus"),
+        eq(transactionsTable.note, note),
+      ),
+    )
+    .limit(1);
+  if (already[0]) return { paid: false };
+
+  const referrer = await getUserById(depositor.referredBy);
+  if (!referrer) return { paid: false };
+
+  await addChips(referrer.telegramId, bonus, "referral_bonus", note);
+
+  // Notify referrer (best-effort)
+  try {
+    const { notifyCasinoUser } = await import("./bot-notify");
+    const who =
+      depositor.username
+        ? `@${depositor.username}`
+        : depositor.firstName || "Your referral";
+    await notifyCasinoUser(
+      referrer.telegramId,
+      `🎁 *Referral bonus!*\n\n` +
+        `${who} deposited *$${depositUsd.toFixed(2)}*\n` +
+        `You earned *$${bonus.toFixed(2)}* (${REFERRAL_PERCENT}%)`,
+    );
+  } catch {
+    /* ignore notify failures */
+  }
+
+  return { paid: true, bonus, referrerTgId: referrer.telegramId };
+}
+
+export async function getReferralStats(telegramId: string): Promise<{
+  code: string;
+  referredCount: number;
+  totalEarned: number;
+  pendingHint: string;
+}> {
+  const code = await ensureReferralCode(telegramId);
+  const user = await getUserByTgId(telegramId);
+  if (!user) throw new Error("User not found");
+
+  const referred = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(eq(usersTable.referredBy, user.id));
+
+  const bonuses = await db
+    .select({ amount: transactionsTable.amount })
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.userId, user.id),
+        eq(transactionsTable.type, "referral_bonus"),
+        eq(transactionsTable.status, "approved"),
+      ),
+    );
+
+  const totalEarned = bonuses.reduce((s, r) => s + parseFloat(r.amount), 0);
+
+  return {
+    code,
+    referredCount: referred.length,
+    totalEarned,
+    pendingHint: `Earn ${REFERRAL_PERCENT}% when they deposit`,
+  };
 }

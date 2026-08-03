@@ -24,6 +24,10 @@ import {
   countUserPendingWithdrawals,
   cancelUserWithdrawal,
   bindWithdrawalPayoutId,
+  attachReferrer,
+  ensureReferralCode,
+  getReferralStats,
+  REFERRAL_PERCENT,
   InsufficientChipsError,
 } from "./db-helpers";
 import { notifyAdmins } from "./bot-notify";
@@ -155,12 +159,94 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     );
   }
 
+  async function showReferralPanel(
+    ctx: BotContext,
+    tgId: string,
+    asReply = false,
+  ): Promise<void> {
+    await getOrCreateUser(tgId, ctx.from?.username, ctx.from?.first_name, ctx.from?.last_name);
+    const stats = await getReferralStats(tgId);
+    const link = botUsername
+      ? `https://t.me/${botUsername}?start=ref_${stats.code}`
+      : `ref_${stats.code}`;
+    const text =
+      `🎁 *Invite & Earn ${REFERRAL_PERCENT}%*\n\n` +
+      `Share your link. When a *new* player joins with it and *deposits*, ` +
+      `you get *${REFERRAL_PERCENT}%* of their deposit — instantly.\n\n` +
+      `🔗 *Your link:*\n\`${link}\`\n\n` +
+      `🏷 Code: \`${stats.code}\`\n` +
+      `👥 Friends joined: *${stats.referredCount}*\n` +
+      `💵 Earned: *$${stats.totalEarned.toFixed(2)}*\n\n` +
+      `${stats.pendingHint}`;
+    const markup = {
+      inline_keyboard: [
+        ...(botUsername
+          ? [[{ text: "📤 Share link", url: `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(`Join Pablo Dice and play with me! ${link}`)}` }]]
+          : []),
+        [
+          { text: "💳 Deposit", callback_data: "menu_deposit" },
+          { text: "🏠 Menu", callback_data: "main_menu" },
+        ],
+      ],
+    };
+    if (asReply || !ctx.callbackQuery) {
+      await ctx.reply(text, { parse_mode: "Markdown", reply_markup: markup });
+    } else {
+      await ctx.editMessageText(text, { parse_mode: "Markdown", reply_markup: markup });
+    }
+  }
+
   // ─── Helper: handle deep-link startPayload (private chat only) ──────────
   async function handleStartPayload(ctx: BotContext, tgId: string, payload: string): Promise<void> {
+    // Referral deep-link: /start ref_CODE
+    if (payload.startsWith("ref_") || payload.startsWith("REF_")) {
+      const code = payload.replace(/^ref_/i, "");
+      const existing = await getUserByTgId(tgId);
+      // Only brand-new accounts get a referrer (created moments ago, no prior referredBy)
+      const isFresh =
+        !!existing &&
+        !existing.referredBy &&
+        Date.now() - new Date(existing.createdAt).getTime() < 60_000;
+
+      if (isFresh) {
+        const attached = await attachReferrer(tgId, code);
+        if (attached.ok && attached.referrer) {
+          const refName = attached.referrer.username
+            ? `@${attached.referrer.username}`
+            : attached.referrer.firstName || "a friend";
+          await ctx.reply(
+            `✅ You joined via *${refName}*'s invite!\n` +
+              `They earn *${REFERRAL_PERCENT}%* of your deposits.`,
+            { parse_mode: "Markdown" },
+          );
+        }
+      }
+
+      await ctx.reply(startWelcomeText(CASINO_CHAT_GROUP), {
+        parse_mode: "Markdown",
+        reply_markup: startWelcomeKeyboard(CASINO_CHAT_GROUP),
+        disable_web_page_preview: true,
+      });
+      return;
+    }
+
+    if (payload === "referral" || payload === "ref") {
+      await showReferralPanel(ctx, tgId, true);
+      return;
+    }
+
     if (payload === "balance") {
       const chips = await getChips(tgId);
-      await ctx.reply(`💰 *Your Balance*\n\n${chips.toFixed(0)} USD`, {
-        parse_mode: "Markdown", reply_markup: mainMenu(),
+      await ctx.reply(`Your balance: *$${chips.toFixed(2)}*`, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "💳 Deposit", callback_data: "menu_deposit" },
+              { text: "💸 Withdraw", callback_data: "menu_withdraw" },
+            ],
+          ],
+        },
       });
       return;
     }
@@ -203,7 +289,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   bot.start(async (ctx) => {
     const from = ctx.from!;
     const tgId = String(from.id);
+    // Create user first so ref_ deep-links can attach on brand-new accounts
     await getOrCreateUser(tgId, from.username, from.first_name, from.last_name);
+    await ensureReferralCode(tgId).catch(() => {});
 
     // Clear leftover custom reply-keyboard in private chats
     if (!isGroup(ctx)) {
@@ -251,12 +339,12 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     return ctx.reply(helpText(), { parse_mode: "Markdown", reply_markup: mainMenu() });
   });
 
-  // ─── /code — referral stub (menu reference) ─────────────────────────────
-  bot.command("code", async (ctx) => {
-    await ctx.reply(
-      `🎁 *Referral codes*\n\nPromo codes are coming soon.\nWhen live: \`/code YOURCODE\``,
-      { parse_mode: "Markdown", reply_markup: mainMenu() },
-    );
+  // ─── /referral · /code — invite link + 5% earnings ──────────────────────
+  bot.command(["referral", "ref", "code"], async (ctx) => {
+    const tgId = String(ctx.from!.id);
+    await getOrCreateUser(tgId, ctx.from!.username, ctx.from!.first_name, ctx.from!.last_name);
+    if (isGroup(ctx)) return replyPrivateRedirect(ctx, "referral", "🎁 Referral");
+    return showReferralPanel(ctx, tgId, true);
   });
 
   // ─── Chat duel games: /dice 1 → mode → race → confirm → bot|player ─────
@@ -367,19 +455,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       );
     }
 
-    if (data === "menu_bonuses") {
-      return ctx.editMessageText(
-        `🎁 *Bonuses*\n\n` +
-          `Daily / promo bonuses coming soon.\n` +
-          `Referral: use \`/code <code>\` when available.\n\n` +
-          `Stay tuned!`,
-        {
-          parse_mode: "Markdown",
-          reply_markup: {
-            inline_keyboard: [[{ text: "🏠 Menu", callback_data: "main_menu" }]],
-          },
-        },
-      );
+    if (data === "menu_bonuses" || data === "menu_referral") {
+      if (isGroup(ctx)) {
+        return ctx.answerCbQuery("Open the bot in private for referrals", { show_alert: true });
+      }
+      return showReferralPanel(ctx, tgId, false);
     }
 
     if (data === "menu_more") {
@@ -1907,6 +1987,8 @@ function helpText(): string {
     `*Wallet:*\n` +
     `/balance /deposit /withdraw\n` +
     `Withdrawals: *LTC only*\n\n` +
+    `*Invite:*\n` +
+    `/referral — share link, earn *${REFERRAL_PERCENT}%* of friends' deposits\n\n` +
     `Group: ${CASINO_CHAT_GROUP}\n` +
     `_Good luck! 🍀_`
   );
