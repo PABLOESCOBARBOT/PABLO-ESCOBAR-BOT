@@ -48,7 +48,7 @@ import { goalGame } from "./games/goal";
 import { hoopGame } from "./games/hoop";
 
 /** Public group where chat duels are played. */
-export const CASINO_CHAT_GROUP = "@PabloCasinoChat";
+export const CASINO_CHAT_GROUP = "@PabloDice";
 
 /**
  * Only Telegram's real animated activity emojis:
@@ -534,31 +534,56 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
     resolveUserDice(chatId, uid, dice.emoji, dice.value, ctx.message.message_id);
   });
 
+  /** Short aliases from /start greeting → real chat game commands */
+  const aliases: Record<string, string> = {
+    bowl: "bowling",
+    darts: "dart",
+    ball: "football",
+    bask: "basketball",
+  };
+
+  const startChatGame = async (
+    ctx: ChatBotContext,
+    g: ChatGameDefinition,
+    rawText: string,
+  ) => {
+    try {
+      const parts = rawText.trim().split(/\s+/);
+      const bet = parseBet(parts[1]);
+      if (bet == null) {
+        await ctx.reply(usage(g), {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "Bet 1", callback_data: `${CB}|again|${g.command}|1` },
+                { text: "Bet 5", callback_data: `${CB}|again|${g.command}|5` },
+                { text: "Bet 10", callback_data: `${CB}|again|${g.command}|10` },
+              ],
+            ],
+          },
+        });
+        return;
+      }
+      await startSetup(ctx, g, bet);
+    } catch {
+      await ctx.reply("Could not start game. Try again.");
+    }
+  };
+
   for (const g of chatGames) {
     bot.command(g.command, async (ctx) => {
-      try {
-        const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
-        const parts = text.trim().split(/\s+/);
-        const bet = parseBet(parts[1]);
-        if (bet == null) {
-          await ctx.reply(usage(g), {
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "Bet 1", callback_data: `${CB}|again|${g.command}|1` },
-                  { text: "Bet 5", callback_data: `${CB}|again|${g.command}|5` },
-                  { text: "Bet 10", callback_data: `${CB}|again|${g.command}|10` },
-                ],
-              ],
-            },
-          });
-          return;
-        }
-        await startSetup(ctx, g, bet);
-      } catch {
-        await ctx.reply("Could not start game. Try again.");
-      }
+      const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
+      await startChatGame(ctx, g, text);
+    });
+  }
+
+  for (const [alias, target] of Object.entries(aliases)) {
+    const g = byCommand.get(target);
+    if (!g) continue;
+    bot.command(alias, async (ctx) => {
+      const text = ctx.message && "text" in ctx.message ? ctx.message.text : "";
+      await startChatGame(ctx, g, text);
     });
   }
 

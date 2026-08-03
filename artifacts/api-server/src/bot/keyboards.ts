@@ -44,16 +44,62 @@ export function mainMenu(): InlineKeyboardMarkup {
   };
 }
 
-/** Home menu message body (Pablo branding, DiceGamble-style layout). */
+/** Compact menu body after the /start greeting. */
 export function homeMenuText(balance: number, firstName?: string): string {
   const hi = firstName ? `Hey ${firstName}!\n` : "";
   return (
-    `${hi}Enjoy the games!\n\n` +
-    `🏠 *Menu*\n` +
+    `${hi}🏠 *Menu*\n` +
     `Your balance: *$${balance.toFixed(2)} USD*\n\n` +
     `Withdrawals in *LTC*\n` +
     `Choose the action:`
   );
+}
+
+/** Full /start greeting (DiceGamble-style). */
+export function startWelcomeText(group = "@PabloDice"): string {
+  return (
+    `👋 *Greetings!*\n\n` +
+    `*Pablo Dice* is the most popular bot for live games with other people!\n` +
+    `Our main group with an active community is ${group}\n\n` +
+    `📣 *How To Start?*\n` +
+    `1. Make sure you have a balance. You can deposit by entering the /balance command.\n` +
+    `2. Go to our group: ${group}\n` +
+    `3. Enter the /dice command and you are ready!\n\n` +
+    `📣 *What games can I play?*\n` +
+    `• 🎲 Dice - /dice\n` +
+    `• 🎳 Bowling - /bowl\n` +
+    `• 🎯 Darts - /darts\n` +
+    `• ⚽ Football - /ball\n` +
+    `• 🏀 Basketball - /bask\n` +
+    `• 🪙 Coinflip - /coin\n` +
+    `• 🎰 Slot machine - /slots\n` +
+    `• 🎰 Roulette - /roulette\n` +
+    `• 🎲 Dice Prediction - /predict\n` +
+    `• 🃏 Blackjack - /blackjack\n` +
+    `• 💣 Mines - /mines\n` +
+    `• 📍 Plinko - /plinko\n` +
+    `• 🐒 Monkey Tower - /tower\n` +
+    `• 🐔 Crossy Road - /crossyroad\n` +
+    `• 🎰 Wheel - /wheel\n` +
+    `• 🔫 Revolver (NEW!) - /revolver\n` +
+    `• 🃏 Ride the Bus (NEW!) - /bus\n` +
+    `• More is coming! - /news\n\n` +
+    `Enjoy the games! 🍀`
+  );
+}
+
+export function startWelcomeKeyboard(group = "@PabloDice"): InlineKeyboardMarkup {
+  const groupUser = group.replace("@", "");
+  return {
+    inline_keyboard: [
+      [
+        { text: "💳 Deposit", callback_data: "menu_deposit" },
+        { text: "💰 Balance", callback_data: "balance" },
+      ],
+      [{ text: `💬 Open ${group}`, url: `https://t.me/${groupUser}` }],
+      [{ text: "🎮 Play / Menu", callback_data: "main_menu" }],
+    ],
+  };
 }
 
 export function gamesMenu(): InlineKeyboardMarkup {

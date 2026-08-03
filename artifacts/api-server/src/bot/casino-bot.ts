@@ -54,6 +54,8 @@ const WITHDRAW_CRYPTO = "ltc";
 import {
   mainMenu,
   homeMenuText,
+  startWelcomeText,
+  startWelcomeKeyboard,
   gamesMenu,
   betMenu,
   diceChoiceMenu,
@@ -224,10 +226,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return handleStartPayload(ctx, tgId, ctx.startPayload);
     }
 
-    const chips = await getChips(tgId);
-    await ctx.reply(homeMenuText(chips, from.first_name), {
+    // Full DiceGamble-style greeting on /start
+    await ctx.reply(startWelcomeText(CASINO_CHAT_GROUP), {
       parse_mode: "Markdown",
-      reply_markup: mainMenu(),
+      reply_markup: startWelcomeKeyboard(CASINO_CHAT_GROUP),
+      disable_web_page_preview: true,
     });
   });
 
@@ -268,6 +271,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     ["roulette",  "game_roulette",  "roulette", "🎡 *Roulette — Select your bet:*"],
     ["crash",     "game_crash",     "crash",    "📈 *Crash — Select your bet:*"],
     ["plinko",    "game_plinko",    "plinko",   "🏓 *Plinko — Select your bet:*"],
+    ["coin",      "game_coinflip",  "coinflip", "🪙 *Coin Flip — Select your bet:*"],
   ];
   for (const [cmd, _payload, prefix, label] of gameCommands) {
     bot.command(cmd, async (ctx) => {
@@ -275,6 +279,28 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       await getOrCreateUser(tgId, ctx.from!.username, ctx.from!.first_name, ctx.from!.last_name);
       // Works in both group AND private — no redirect!
       await ctx.reply(label, { parse_mode: "Markdown", reply_markup: betMenu(prefix) });
+    });
+  }
+
+  // Coming-soon games listed on /start greeting
+  const comingSoon: Array<[string, string]> = [
+    ["predict", "🎲 Dice Prediction"],
+    ["mines", "💣 Mines"],
+    ["tower", "🐒 Monkey Tower"],
+    ["crossyroad", "🐔 Crossy Road"],
+    ["wheel", "🎰 Wheel"],
+    ["revolver", "🔫 Revolver"],
+    ["bus", "🃏 Ride the Bus"],
+    ["news", "📰 News"],
+  ];
+  for (const [cmd, title] of comingSoon) {
+    bot.command(cmd, async (ctx) => {
+      await ctx.reply(
+        cmd === "news"
+          ? `📰 *News*\n\nNew games and updates drop here first.\nFollow ${CASINO_CHAT_GROUP} for announcements!`
+          : `${title} is *coming soon!*\n\nPlay live games now in ${CASINO_CHAT_GROUP} with \`/dice\`.`,
+        { parse_mode: "Markdown" },
+      );
     });
   }
 
@@ -1868,6 +1894,7 @@ function helpText(): string {
     `*Wallet:*\n` +
     `/balance /deposit /withdraw\n` +
     `Withdrawals: *LTC only*\n\n` +
+    `Group: ${CASINO_CHAT_GROUP}\n` +
     `_Good luck! 🍀_`
   );
 }
