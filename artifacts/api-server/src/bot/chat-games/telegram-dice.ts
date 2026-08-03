@@ -25,13 +25,23 @@ function key(chatId: number, userId: string) {
   return `${chatId}:${userId}`;
 }
 
-export function cancelPendingThrow(chatId: number, userId: string): void {
+/** Drop a waiter without rejecting (used when replacing with a new wait). */
+function clearPendingThrow(chatId: number, userId: string): void {
   const k = key(chatId, userId);
   const p = pending.get(k);
   if (!p) return;
   clearTimeout(p.timer);
   pending.delete(k);
-  p.reject(new Error("cancelled"));
+}
+
+/** Cancel and reject a pending human throw (match cancelled / timed out). */
+export function cancelPendingThrow(chatId: number, userId: string, reason = "cancelled"): void {
+  const k = key(chatId, userId);
+  const p = pending.get(k);
+  if (!p) return;
+  clearTimeout(p.timer);
+  pending.delete(k);
+  p.reject(new Error(reason));
 }
 
 export type ResolveDiceResult =
@@ -64,14 +74,18 @@ export function getPendingEmoji(chatId: number, userId: string): TgDiceEmoji | n
   return pending.get(key(chatId, userId))?.emoji ?? null;
 }
 
-/** Ask a human to send a Telegram dice sticker; times out soft. */
+/**
+ * Wait for a human to send the real Telegram animated emoji.
+ * Does NOT auto-throw — caller handles timeout by cancelling the match.
+ */
 export function waitForUserDice(
   chatId: number,
   userId: string,
   emoji: TgDiceEmoji,
-  timeoutMs = 45_000,
+  timeoutMs = 120_000,
 ): Promise<DiceThrowResult> {
-  cancelPendingThrow(chatId, userId);
+  // Replace any previous waiter silently (don't reject→auto-throw races)
+  clearPendingThrow(chatId, userId);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(key(chatId, userId));

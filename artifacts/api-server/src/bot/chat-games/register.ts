@@ -211,17 +211,57 @@ async function say(
   chatId: number,
   text: string,
   replyTo?: number,
-): Promise<void> {
+): Promise<number | undefined> {
   try {
-    await bot.telegram.sendMessage(chatId, text, {
+    const sent = await bot.telegram.sendMessage(chatId, text, {
       parse_mode: "Markdown",
       ...(replyTo ? { reply_to_message_id: replyTo } : {}),
     });
+    return sent.message_id;
   } catch {
     // reply target may be gone — still deliver the text
     if (replyTo) {
-      await bot.telegram.sendMessage(chatId, text, { parse_mode: "Markdown" }).catch(() => {});
+      try {
+        const sent = await bot.telegram.sendMessage(chatId, text, { parse_mode: "Markdown" });
+        return sent.message_id;
+      } catch {
+        return undefined;
+      }
     }
+    return undefined;
+  }
+}
+
+/** Prompt a human to send the real animated emoji (force-reply so group privacy still delivers it). */
+async function promptHumanTurn(
+  bot: Telegraf<ChatBotContext>,
+  chatId: number,
+  player: { userId: string; name: string; username?: string },
+  emoji: TgDiceEmoji,
+  replyTo: number,
+  throwLabel = "",
+): Promise<number> {
+  const mention = player.username ? `@${player.username}` : player.name;
+  const text = `${mention}, Your Turn:${throwLabel}\nSend ${emoji}`;
+  try {
+    const sent = await bot.telegram.sendMessage(chatId, text, {
+      reply_to_message_id: replyTo,
+      reply_markup: {
+        force_reply: true,
+        selective: !!player.username,
+        input_field_placeholder: `Send ${emoji}`,
+      },
+    });
+    return sent.message_id;
+  } catch {
+    const sent = await bot.telegram.sendMessage(chatId, text, {
+      reply_markup: {
+        force_reply: true,
+        selective: !!player.username,
+        input_field_placeholder: `Send ${emoji}`,
+      },
+    });
+    return sent.message_id;
   }
 }
 
@@ -255,7 +295,11 @@ async function startSetup(
     gameId: g.id,
     chatId: ctx.chat!.id,
     messageId: sent.message_id,
-    host: { userId: tgId, name: hostName },
+    host: {
+      userId: tgId,
+      name: hostName,
+      username: from.username,
+    },
     bet,
     status: "pick_mode",
     scoreHost: 0,
@@ -279,6 +323,7 @@ async function runMatch(
   const guestPlayer = {
     userId: match.guest?.userId ?? "bot",
     name: guestName,
+    username: match.guest?.username,
   };
   const guestIsBot = match.opponent === "bot";
 
@@ -309,15 +354,17 @@ async function runMatch(
    * Turn order (same for every game):
    *  Round 1 — host starts
    *  Round 2+ — whoever threw LAST in the previous round starts
-   *    (so if you finished the round, you also open the next one)
    *
    * Message pattern each round:
-   *  1) "Name, Your Turn:"  → player throws emoji
-   *  2) "Bot, Your Turn:"   → bot throws emoji
+   *  1) "Name, Your Turn:" + Send emoji → human sends real animation
+   *  2) "Bot, Your Turn:" → bot sends real animation
    *  3) Scorecard (only after both have thrown)
+   *
+   * Never auto-throw for humans — wait for their emoji.
    */
   let lastThrower: "host" | "guest" = "host";
 
+  try {
   while (match.scoreHost < raceTo && match.scoreGuest < raceTo) {
     match.round += 1;
     chatStore.save(match);
@@ -333,74 +380,86 @@ async function runMatch(
 
     // Fresh plan each round so crazy multipliers re-roll
     const plan = g.throwPlan?.(mode);
+    if (!plan) {
+      throw new Error("Game missing throw plan");
+    }
 
-    if (plan) {
-      for (const who of order) {
-        const player = who === "host" ? match.host : guestPlayer;
-        const isBot = who === "guest" && guestIsBot;
+    for (const who of order) {
+      const player = who === "host" ? match.host : guestPlayer;
+      const isBot = who === "guest" && guestIsBot;
 
-        // Simple turn line only — never post the scorecard between throws
-        await say(bot, match.chatId, `${player.name}, Your Turn:`, lastDiceMsgId);
-
-        const thrown = await collectThrows(
-          bot,
-          match.chatId,
-          player,
-          isBot,
-          plan,
-          lastDiceMsgId,
-          { promptOnBoard: true },
-        );
-        lastDiceMsgId = thrown.lastMsgId;
-        lastThrower = who;
-        if (who === "host") hostScore = thrown;
-        else guestScore = thrown;
-      }
-
-      const hostValue = hostScore!.value;
-      const guestValue = guestScore!.value;
-      const winner = plan.decide
-        ? plan.decide(hostScore!, guestScore!)
-        : hostValue > guestValue
-          ? "host"
-          : hostValue < guestValue
-            ? "guest"
-            : "draw";
-
-      if (winner === "host") match.scoreHost += 1;
-      else if (winner === "guest") match.scoreGuest += 1;
-      chatStore.save(match);
-
-      // Scorecard ONLY after both players have thrown
-      const pointLine =
-        winner === "draw"
-          ? `Draw · ${hostScore!.display} · ${guestScore!.display}`
-          : winner === "host"
-            ? `${match.host.name} scores! · ${hostScore!.display} vs ${guestScore!.display}`
-            : `${guestName} scores! · ${hostScore!.display} vs ${guestScore!.display}`;
-
-      await showScoreBoard(
+      const thrown = await collectThrows(
         bot,
         match.chatId,
-        board,
-        scoreBoardText(
-          match.host.name,
-          guestName,
-          match.scoreHost,
-          match.scoreGuest,
-          pointLine,
-        ),
+        player,
+        isBot,
+        plan,
         lastDiceMsgId,
       );
-      await sleep(1200);
-    } else {
-      const round = g.playRound(mode);
-      await sleep(600);
-      if (round.winner === "host") match.scoreHost += 1;
-      else if (round.winner === "guest") match.scoreGuest += 1;
-      lastThrower = order[1]!;
-      chatStore.save(match);
+      lastDiceMsgId = thrown.lastMsgId;
+      lastThrower = who;
+      if (who === "host") hostScore = thrown;
+      else guestScore = thrown;
     }
+
+    const hostValue = hostScore!.value;
+    const guestValue = guestScore!.value;
+    const winner = plan.decide
+      ? plan.decide(hostScore!, guestScore!)
+      : hostValue > guestValue
+        ? "host"
+        : hostValue < guestValue
+          ? "guest"
+          : "draw";
+
+    if (winner === "host") match.scoreHost += 1;
+    else if (winner === "guest") match.scoreGuest += 1;
+    chatStore.save(match);
+
+    // Scorecard ONLY after both players have thrown
+    const pointLine =
+      winner === "draw"
+        ? `Draw · ${hostScore!.display} · ${guestScore!.display}`
+        : winner === "host"
+          ? `${match.host.name} scores! · ${hostScore!.display} vs ${guestScore!.display}`
+          : `${guestName} scores! · ${hostScore!.display} vs ${guestScore!.display}`;
+
+    await showScoreBoard(
+      bot,
+      match.chatId,
+      board,
+      scoreBoardText(
+        match.host.name,
+        guestName,
+        match.scoreHost,
+        match.scoreGuest,
+        pointLine,
+      ),
+      lastDiceMsgId,
+    );
+    await sleep(1200);
+  }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    cancelPendingThrow(match.chatId, match.host.userId);
+    if (match.guest) cancelPendingThrow(match.chatId, match.guest.userId);
+    // Refund locked bets if match aborts mid-play
+    try {
+      await addChips(match.host.userId, match.bet, "game_win", `${g.id} refund`);
+      if (match.opponent === "pvp" && match.guest) {
+        await addChips(match.guest.userId, match.bet, "game_win", `${g.id} refund`);
+      }
+    } catch { /* best effort */ }
+    await say(
+      bot,
+      match.chatId,
+      msg === "timeout"
+        ? `${g.emoji} Match cancelled — no ${g.emoji} received in time. Bet refunded.`
+        : `${g.emoji} Match cancelled. Bet refunded.`,
+      lastDiceMsgId,
+    );
+    chatStore.delete(match.id);
+    return;
   }
 
   const hostWon = match.scoreHost >= raceTo;
@@ -485,23 +544,17 @@ async function runMatch(
   chatStore.delete(match.id);
 }
 
-type ThrowOpts = {
-  /** Turn line already shown on the scoreboard — don't spam a separate prompt. */
-  promptOnBoard: boolean;
-};
-
 /**
  * Collect real Telegram animated emoji throws.
- * Caller already sent the "Name, Your Turn:" line for the first throw.
+ * Humans must send the emoji themselves — never auto-thrown by the bot.
  */
 async function collectThrows(
   bot: Telegraf<ChatBotContext>,
   chatId: number,
-  player: { userId: string; name: string },
+  player: { userId: string; name: string; username?: string },
   isBot: boolean,
   plan: ThrowPlan,
   replyTo: number,
-  opts: ThrowOpts,
 ): Promise<{ value: number; display: string; lastMsgId: number }> {
   const values: number[] = [];
   let lastMsgId = replyTo;
@@ -510,28 +563,17 @@ async function collectThrows(
   for (let i = 0; i < plan.throws; i++) {
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
-      // First throw: "Bot, Your Turn:" already sent by runMatch — just animate
-      if (!opts.promptOnBoard || i > 0) {
-        await say(bot, chatId, `${player.name}, Your Turn:${nLabel}`, lastMsgId);
-      }
+      await say(bot, chatId, `Bot, Your Turn:${nLabel}`, lastMsgId);
       const thrown = await botThrowDice(bot.telegram, chatId, emoji, lastMsgId);
       values.push(thrown.value);
       lastMsgId = thrown.messageId;
     } else {
-      if (!opts.promptOnBoard || i > 0) {
-        await say(bot, chatId, `${player.name}, Your Turn:${nLabel}`, lastMsgId);
-      }
-      try {
-        const thrown = await waitForUserDice(chatId, player.userId, emoji, 45_000);
-        values.push(thrown.value);
-        lastMsgId = thrown.messageId;
-        await sleep(diceAnimMs(emoji));
-      } catch {
-        await say(bot, chatId, `${player.name} late — auto ${emoji}`, lastMsgId);
-        const thrown = await botThrowDice(bot.telegram, chatId, emoji, lastMsgId);
-        values.push(thrown.value);
-        lastMsgId = thrown.messageId;
-      }
+      // Force-reply so group privacy mode still delivers the user's dice to the bot
+      lastMsgId = await promptHumanTurn(bot, chatId, player, emoji, lastMsgId, nLabel);
+      const thrown = await waitForUserDice(chatId, player.userId, emoji, 120_000);
+      values.push(thrown.value);
+      lastMsgId = thrown.messageId;
+      await sleep(diceAnimMs(emoji));
     }
   }
   const combined = plan.combine(values);
@@ -563,8 +605,9 @@ export function gameGuideText(g: ChatGameDefinition): string {
  * Min bet 1, payout always 1.92x.
  */
 export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
-  // Capture real Telegram dice/activity emoji from players
+  // Capture real Telegram dice/activity emoji from players (never from bots)
   bot.on(message("dice"), async (ctx) => {
+    if (ctx.from?.is_bot) return; // ignore our own sendDice / other bots — stops auto-resolve
     const dice = ctx.message.dice;
     const uid = String(ctx.from.id);
     const chatId = ctx.chat.id;
@@ -575,7 +618,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
       dice.value,
       ctx.message.message_id,
     );
-    // Wrong animation for this game (e.g. sent 🎲 during ⚽) — tell them
+    // Wrong animation for this game (e.g. sent 🎲 during 🎳) — keep waiting
     if (!result.ok && result.reason === "wrong_emoji") {
       await ctx
         .reply(`Send ${result.expected} for this game (not ${result.got}).`, {
@@ -848,7 +891,11 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           await ctx.answerCbQuery(`Need ${match.bet} USD`, { show_alert: true });
           return;
         }
-        match.guest = { userId: uid, name: displayName(ctx.from!) };
+        match.guest = {
+          userId: uid,
+          name: displayName(ctx.from!),
+          username: ctx.from!.username,
+        };
         match.opponent = "pvp";
         chatStore.save(match);
         await ctx.answerCbQuery("Joined!");

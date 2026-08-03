@@ -20,6 +20,8 @@ export const MODE_LABELS: Record<ChatGameMode, string> = {
 export interface ChatPlayer {
   userId: string;
   name: string;
+  /** Telegram @username without @ — used for force-reply mentions in groups. */
+  username?: string;
 }
 
 export type SetupStatus =
