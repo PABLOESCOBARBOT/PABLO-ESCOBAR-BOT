@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { isNowPaymentsEnabled, getIpnCallbackUrl } from "./bot/nowpayments";
 
 const app: Express = express();
 
@@ -34,7 +35,11 @@ app.get("/", (_req, res) => {
   res.status(200).send("ok");
 });
 app.get("/health", (_req, res) => {
-  res.status(200).json({ ok: true });
+  res.status(200).json({
+    ok: true,
+    nowpayments: isNowPaymentsEnabled(),
+    ipnConfigured: Boolean(getIpnCallbackUrl()),
+  });
 });
 
 app.use("/api", router);

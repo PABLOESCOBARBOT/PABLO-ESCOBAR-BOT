@@ -245,16 +245,25 @@ export async function getInvoice(invoiceId: string | number): Promise<NowPayment
   }
 }
 
-/** Try direct payment; on min-amount error fall back to invoice → invoice-payment. */
+function isMinAmountError(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return msg.includes("amount_minimal") || msg.includes("less than minimal") || msg.includes("minimal");
+}
+
+/**
+ * Create a deposit that ALWAYS returns an on-chain pay_address (no external checkout).
+ * Throws a clear Error if address cannot be created.
+ */
 export async function createDepositCheckout(
   payCurrency: string,
   priceAmountUsd: number,
   orderId: string,
   description?: string,
-): Promise<
-  | { mode: "payment"; payment: NowPaymentsPayment }
-  | { mode: "invoice"; invoice: NowPaymentsInvoice; payment?: NowPaymentsPayment }
-> {
+): Promise<{ mode: "payment"; payment: NowPaymentsPayment }> {
+  if (!getApiKey()) {
+    throw new Error("Payments are not configured (missing API key). Contact admin.");
+  }
+
   const ipnUrl = getIpnCallbackUrl();
   if (!ipnUrl) {
     logger.warn(
@@ -262,31 +271,64 @@ export async function createDepositCheckout(
     );
   }
 
+  const currency = payCurrency.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Soft min check so users get a clear message instead of a generic failure
+  const minUsd = await getMinAmountUsd(currency);
+  if (priceAmountUsd + 1e-9 < minUsd) {
+    throw new Error(
+      `Minimum deposit for this crypto is $${Math.ceil(minUsd)} USD. You entered $${priceAmountUsd}.`,
+    );
+  }
+
+  let lastErr: unknown;
+
+  // 1) Direct payment (preferred — returns address immediately)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const payment = await createPayment(
+        currency,
+        priceAmountUsd,
+        attempt === 1 ? orderId : `${orderId}-r${attempt}`,
+        description,
+      );
+      if (payment.pay_address) {
+        return { mode: "payment", payment };
+      }
+      lastErr = new Error("Payment created but address was empty");
+      logger.warn({ payment, attempt }, "NOWPayments payment missing pay_address");
+    } catch (e) {
+      lastErr = e;
+      logger.warn({ e, orderId, currency, priceAmountUsd, attempt }, "NOWPayments createPayment failed");
+      if (isMinAmountError(e)) {
+        throw new Error(
+          `Minimum deposit for this crypto is about $${Math.ceil(minUsd)} USD. Try a higher amount.`,
+        );
+      }
+    }
+  }
+
+  // 2) Invoice → invoice-payment (still returns an address; never send users to external URL)
   try {
-    const payment = await createPayment(payCurrency, priceAmountUsd, orderId, description);
+    const invoice = await createInvoice(currency, priceAmountUsd, `${orderId}-inv`, description);
+    const payment = await createInvoicePayment(Number(invoice.id) || invoice.id, currency);
     if (payment.pay_address) {
       return { mode: "payment", payment };
     }
+    lastErr = new Error("Invoice payment missing address");
+    logger.warn({ payment, invoiceId: invoice.id }, "invoice-payment missing pay_address");
   } catch (e) {
-    const msg = String(e);
-    if (!msg.includes("amount") && !msg.includes("AMOUNT_MINIMAL") && !msg.includes("minimal")) {
-      logger.warn({ e, orderId }, "NOWPayments createPayment failed — trying invoice");
+    lastErr = e;
+    logger.warn({ e, orderId, currency }, "NOWPayments invoice-payment failed");
+    if (isMinAmountError(e)) {
+      throw new Error(
+        `Minimum deposit for this crypto is about $${Math.ceil(minUsd)} USD. Try a higher amount.`,
+      );
     }
   }
 
-  const invoice = await createInvoice(payCurrency, priceAmountUsd, orderId, description);
-
-  // Prefer a pollable payment_id + on-page address when possible
-  try {
-    const payment = await createInvoicePayment(invoice.id, payCurrency);
-    if (payment.payment_id) {
-      return { mode: "invoice", invoice, payment };
-    }
-  } catch (e) {
-    logger.warn({ e, invoiceId: invoice.id }, "invoice-payment failed — using invoice URL only");
-  }
-
-  return { mode: "invoice", invoice };
+  const detail = lastErr ? String(lastErr).slice(0, 180) : "unknown error";
+  throw new Error(`Could not create deposit address. ${detail}`);
 }
 
 /** Get a single payment by id (API key works). */

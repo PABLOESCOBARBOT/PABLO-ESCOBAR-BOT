@@ -112,7 +112,7 @@ interface SessionData {
   pvpBet?: number;
 }
 
-/** Soft min for deposits — NOWPayments may require higher per-coin; invoice fallback covers low amounts. */
+/** Soft UI min — gateway may require higher (~$19+). Real min checked per-coin at create time. */
 const DEPOSIT_MIN_USD = 1;
 
 type BotContext = Context & { session: SessionData };
@@ -1008,69 +1008,41 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         `Casino deposit — ${label} — user ${tgId}`,
       );
 
-      // Prefer any path that gives a real on-chain address (never send users to external pages)
-      if (checkout.mode === "payment" && checkout.payment.pay_address) {
-        const payment = checkout.payment;
-        const paymentId = String(payment.payment_id);
-        const payAmount = payment.pay_amount ?? priceUsd;
-        const payAddress = payment.pay_address;
-        const tx = await createAutoDeposit(
-          tgId,
-          crypto,
-          String(payAmount),
-          paymentId,
-          payAddress,
-          orderId,
-        );
-        await showAddressCard({
-          payAmount,
-          payAddress,
-          network: payment.network ?? undefined,
-          paymentId,
-          txId: tx.id,
-        });
-        return;
+      const payment = checkout.payment;
+      const paymentId = String(payment.payment_id);
+      const payAmount = payment.pay_amount ?? priceUsd;
+      const payAddress = payment.pay_address;
+      if (!payAddress) {
+        throw new Error("Empty deposit address from gateway");
       }
 
-      const linked = checkout.mode === "invoice" ? checkout.payment : undefined;
-      if (linked?.payment_id && linked.pay_address) {
-        const paymentId = String(linked.payment_id);
-        const payAmount = linked.pay_amount ?? priceUsd;
-        const payAddress = linked.pay_address;
-        const tx = await createAutoDeposit(
-          tgId,
-          crypto,
-          String(payAmount),
-          paymentId,
-          payAddress,
-          orderId,
-        );
-        await showAddressCard({
-          payAmount,
-          payAddress,
-          network: linked.network ?? undefined,
-          paymentId,
-          txId: tx.id,
-        });
-        return;
-      }
-
-      // No address available — do not show external invoice links
-      await sendHtml(
-        `❌ Could not create a deposit address for this amount.\n\n` +
-          `Try a different amount or another crypto.`,
-        {
-          inline_keyboard: [
-            [{ text: "🔄 Try Again", callback_data: `deposit_crypto_${crypto}` }],
-            [{ text: "🔙 Back", callback_data: "menu_deposit" }],
-          ],
-        },
+      const tx = await createAutoDeposit(
+        tgId,
+        crypto,
+        String(payAmount),
+        paymentId,
+        payAddress,
+        orderId,
       );
+      await showAddressCard({
+        payAmount,
+        payAddress,
+        network: payment.network ?? undefined,
+        paymentId,
+        txId: tx.id,
+      });
     } catch (e) {
-      logger.warn({ e, crypto, priceUsd }, "Deposit address create failed");
+      logger.warn({ e, crypto, priceUsd, tgId }, "Deposit address create failed");
+      const raw = e instanceof Error ? e.message : String(e);
+      // Strip internal gateway wording for users
+      const nice = raw
+        .replace(/NOWPayments[^\n]*/gi, "")
+        .replace(/API error \(\d+\):\s*/gi, "")
+        .trim() || "Please try again.";
       await sendHtml(
-        `❌ Deposit failed. Please try again.\n\n` +
-          `If it keeps failing, contact admin.`,
+        `❌ <b>Could not create deposit address</b>\n\n` +
+          `${nice}\n\n` +
+          `Tip: try <b>$20+</b> (network minimum) or another crypto.`,
         {
           inline_keyboard: [
             [{ text: "🔄 Try Again", callback_data: `deposit_crypto_${crypto}` }],
