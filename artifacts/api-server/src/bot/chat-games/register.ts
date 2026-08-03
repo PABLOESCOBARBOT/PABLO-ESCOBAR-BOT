@@ -97,28 +97,19 @@ function setupText(g: ChatGameDefinition, m: ChatMatch, stage: string): string {
   );
 }
 
-/** Reference confirm card. */
-function confirmBetText(g: ChatGameDefinition, m: ChatMatch): string {
-  const mode = m.mode ? MODE_LABELS[m.mode] : "—";
-  const race = m.raceTo ? `First to ${m.raceTo}` : "—";
-  return (
-    `${g.emoji} *Game confirmation*\n` +
-    `*Your bet: ${money(m.bet)}* 🔥\n` +
-    `${mode} · ${race}\n` +
-    `Win *${money(m.bet * CHAT_PAYOUT_MULT)}*`
-  );
+/** Reference confirm card — only bet line. */
+function confirmBetText(_g: ChatGameDefinition, m: ChatMatch): string {
+  return `*Your bet: ${money(m.bet)}* 🔥`;
 }
 
 /**
- * Live scoreboard — edited in place (DiceGamble style):
- * 🎲
+ * Live scoreboard (DiceGamble style):
  * Score
  * Name: 1
  * Bot: 0
  * Bot, your turn!
  */
 function scoreBoardText(
-  g: ChatGameDefinition,
   hostName: string,
   guestName: string,
   scoreHost: number,
@@ -126,12 +117,35 @@ function scoreBoardText(
   turnLine: string,
 ): string {
   return (
-    `${g.emoji}\n` +
     `*Score*\n` +
     `${hostName}: ${scoreHost}\n` +
     `${guestName}: ${scoreGuest}\n` +
     `*${turnLine}*`
   );
+}
+
+/** Send or edit the live scoreboard; reply to last dice when possible (reference look). */
+async function showScoreBoard(
+  bot: Telegraf<ChatBotContext>,
+  chatId: number,
+  board: { messageId: number },
+  text: string,
+  replyToDice?: number,
+): Promise<void> {
+  // After a real dice throw, post a fresh reply so Telegram shows the dice quote
+  if (replyToDice && replyToDice !== board.messageId) {
+    try {
+      const sent = await bot.telegram.sendMessage(chatId, text, {
+        parse_mode: "Markdown",
+        reply_to_message_id: replyToDice,
+      });
+      board.messageId = sent.message_id;
+      return;
+    } catch {
+      // fall through to edit
+    }
+  }
+  await editMsg(bot.telegram, chatId, board.messageId, text);
 }
 
 function money(amount: number): string {
@@ -241,7 +255,7 @@ async function runMatch(
   const mode = match.mode!;
   const raceTo = match.raceTo!;
   const guestName = match.opponent === "bot" ? "Bot" : match.guest!.name;
-  const boardId = match.messageId;
+  const board = { messageId: match.messageId };
   const guestPlayer = {
     userId: match.guest?.userId ?? "bot",
     name: guestName,
@@ -258,7 +272,7 @@ async function runMatch(
       e instanceof InsufficientChipsError
         ? `${g.emoji} Not enough USD — match cancelled.`
         : `${g.emoji} Could not lock USD — match cancelled.`;
-    await editMsg(bot.telegram, match.chatId, boardId, msg);
+    await editMsg(bot.telegram, match.chatId, board.messageId, msg);
     chatStore.delete(match.id);
     return;
   }
@@ -270,12 +284,12 @@ async function runMatch(
   chatStore.save(match);
 
   const plan = g.throwPlan?.(mode);
-  let lastDiceMsgId = boardId;
+  let lastDiceMsgId = board.messageId;
 
   /**
-   * Turn order (player vs bot / pvp):
-   *  Round 1 — host starts, then guest
-   *  Round 2 — guest starts, then host
+   * Turn order (player vs bot):
+   *  Round 1 — user starts, then bot
+   *  Round 2 — bot starts, then user
    *  Round 3+ — whoever threw last in the previous round starts
    */
   let starter: "host" | "guest" = "host";
@@ -296,27 +310,29 @@ async function runMatch(
     let guestScore: { value: number; display: string } | null = null;
 
     if (plan) {
+      let firstInRound = true;
       for (const who of order) {
         const player = who === "host" ? match.host : guestPlayer;
         const isBot = who === "guest" && guestIsBot;
-        const opener = match.round === 1 && who === "host";
-        const turnLine = opener
-          ? `${player.name}, your turn! To start, send this emoji: ${plan.emoji}`
-          : `${player.name}, your turn!`;
+        const turnLine = `${player.name}, your turn!`;
 
-        await editMsg(
-          bot.telegram,
+        // First prompt of the match: edit lobby card. Later: reply to last dice.
+        const replyTo =
+          match.round === 1 && firstInRound ? undefined : lastDiceMsgId;
+        await showScoreBoard(
+          bot,
           match.chatId,
-          boardId,
+          board,
           scoreBoardText(
-            g,
             match.host.name,
             guestName,
             match.scoreHost,
             match.scoreGuest,
             turnLine,
           ),
+          replyTo,
         );
+        firstInRound = false;
 
         const thrown = await collectThrows(
           bot,
@@ -353,27 +369,6 @@ async function runMatch(
       else if (round.winner === "guest") match.scoreGuest += 1;
       lastThrower = order[1]!;
       chatStore.save(match);
-    }
-
-    const matchOver = match.scoreHost >= raceTo || match.scoreGuest >= raceTo;
-    if (!matchOver) {
-      // Preview next starter on the board between rounds
-      const nextStarter =
-        match.round === 1 ? "guest" : lastThrower;
-      const nextName = nextStarter === "host" ? match.host.name : guestName;
-      await editMsg(
-        bot.telegram,
-        match.chatId,
-        boardId,
-        scoreBoardText(
-          g,
-          match.host.name,
-          guestName,
-          match.scoreHost,
-          match.scoreGuest,
-          `${nextName}, your turn!`,
-        ),
-      );
     }
   }
 
@@ -447,9 +442,8 @@ async function runMatch(
   await editMsg(
     bot.telegram,
     match.chatId,
-    boardId,
+    board.messageId,
     scoreBoardText(
-      g,
       match.host.name,
       guestName,
       match.scoreHost,
