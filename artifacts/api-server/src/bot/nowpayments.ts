@@ -147,18 +147,39 @@ export async function getAuthToken(): Promise<string | null> {
   }
 }
 
-/** Minimum USD amount required for a pay_currency (NOWPayments account min). */
-export async function getMinAmountUsd(payCurrency: string): Promise<number> {
+export type MinAmountInfo = {
+  /** Minimum crypto units the gateway will accept. */
+  minCrypto: number;
+  /** Approximate USD equivalent of that minimum. */
+  minUsd: number;
+};
+
+/**
+ * Gateway minimum for generating a direct pay_address.
+ * Uses currency_from=<crypto>&fiat_equivalent=usd (same check /payment uses).
+ */
+export async function getMinAmountInfo(payCurrency: string): Promise<MinAmountInfo> {
+  const c = payCurrency.toLowerCase();
   try {
-    const result = await apiCall<{ min_amount: number }>(
+    const result = await apiCall<{ min_amount: number; fiat_equivalent?: number }>(
       "GET",
-      `/min-amount?currency_from=usd&currency_to=${encodeURIComponent(payCurrency.toLowerCase())}`,
+      `/min-amount?currency_from=${encodeURIComponent(c)}&currency_to=usd&fiat_equivalent=usd`,
     );
-    return Number(result.min_amount) || 5;
+    const minCrypto = Number(result.min_amount);
+    const minUsd = Number(result.fiat_equivalent ?? result.min_amount);
+    if (Number.isFinite(minCrypto) && minCrypto > 0 && Number.isFinite(minUsd) && minUsd > 0) {
+      return { minCrypto, minUsd };
+    }
   } catch (e) {
-    logger.warn({ e, payCurrency }, "NOWPayments min-amount failed — using $5 default");
-    return 5;
+    logger.warn({ e, payCurrency }, "NOWPayments min-amount failed — using fallback");
   }
+  // Observed NP merchant floor is ~$11–13; keep a safe fallback.
+  return { minCrypto: 0, minUsd: 12 };
+}
+
+/** @deprecated use getMinAmountInfo — kept for callers expecting a USD number. */
+export async function getMinAmountUsd(payCurrency: string): Promise<number> {
+  return (await getMinAmountInfo(payCurrency)).minUsd;
 }
 
 export async function estimateAmount(
@@ -181,12 +202,14 @@ export async function estimateAmount(
 
 /**
  * Create a crypto payment (address + amount). Works with API key (no JWT).
+ * Optional payAmountCrypto forces the on-chain amount (used to clear gateway mins).
  */
 export async function createPayment(
   payCurrency: string,
   priceAmountUsd: number,
   orderId: string,
   description?: string,
+  payAmountCrypto?: number,
 ): Promise<NowPaymentsPayment> {
   const payload: Record<string, unknown> = {
     price_amount: priceAmountUsd,
@@ -195,6 +218,9 @@ export async function createPayment(
     order_id: orderId,
     order_description: description ?? "Casino Deposit",
   };
+  if (payAmountCrypto != null && payAmountCrypto > 0) {
+    payload.pay_amount = payAmountCrypto;
+  }
 
   const ipnUrl = getIpnCallbackUrl();
   if (ipnUrl) payload.ipn_callback_url = ipnUrl;
@@ -256,15 +282,21 @@ function isMinAmountError(err: unknown): boolean {
   );
 }
 
-export type DepositCheckout =
-  | { mode: "payment"; payment: NowPaymentsPayment }
-  /** Hosted checkout when gateway won't return a direct address below its network min (~$19). */
-  | { mode: "invoice_link"; invoice: NowPaymentsInvoice };
+export type DepositCheckout = {
+  mode: "payment";
+  payment: NowPaymentsPayment;
+  /** What the user asked for. */
+  requestedUsd: number;
+  /** Amount we actually created the address for (may be bumped to gateway min). */
+  chargedUsd: number;
+};
 
 /**
- * Create a deposit checkout.
- * - Prefer direct pay_address when gateway allows it
- * - For low amounts (e.g. $5) fall back to invoice_link so deposits still work
+ * Create a deposit with a direct in-chat pay_address — never an external checkout link.
+ *
+ * NOWPayments rejects address creation below ~$12/coin. For lower requests we bump
+ * the charged USD to the gateway minimum so the user still gets an address in chat,
+ * and they are credited for the charged amount when paid.
  */
 export async function createDepositCheckout(
   payCurrency: string,
@@ -284,51 +316,87 @@ export async function createDepositCheckout(
   }
 
   const currency = payCurrency.toLowerCase().replace(/[^a-z0-9]/g, "");
-  let lastErr: unknown;
-  let hitMinAmount = false;
+  const min = await getMinAmountInfo(currency);
+  // Small buffer so mid-flight rate moves don't re-trigger AMOUNT_MINIMAL_ERROR
+  const gatewayFloor = Math.ceil((min.minUsd + 0.35) * 100) / 100;
+  const chargedUsd = Math.max(
+    Math.round(priceAmountUsd * 100) / 100,
+    gatewayFloor,
+  );
 
-  // 1) Direct payment (preferred — in-chat address)
+  let lastErr: unknown;
+
+  // 1) Direct payment at charged amount (always prefer real address)
   try {
-    const payment = await createPayment(currency, priceAmountUsd, orderId, description);
+    const payment = await createPayment(currency, chargedUsd, orderId, description);
     if (payment.pay_address) {
-      return { mode: "payment", payment };
+      return {
+        mode: "payment",
+        payment,
+        requestedUsd: priceAmountUsd,
+        chargedUsd,
+      };
     }
     lastErr = new Error("Payment created but address was empty");
   } catch (e) {
     lastErr = e;
-    hitMinAmount = isMinAmountError(e);
-    logger.warn({ e, orderId, currency, priceAmountUsd }, "NOWPayments createPayment failed");
+    logger.warn(
+      { e, orderId, currency, priceAmountUsd, chargedUsd },
+      "NOWPayments createPayment failed — trying pay_amount override",
+    );
   }
 
-  // 2) Invoice → try to materialize a pay_address
-  let invoice: NowPaymentsInvoice | null = null;
-  try {
-    invoice = await createInvoice(currency, priceAmountUsd, `${orderId}-inv`, description);
+  // 2) Force pay_amount to gateway crypto minimum (still returns pay_address, no link)
+  if (min.minCrypto > 0) {
     try {
-      const payment = await createInvoicePayment(Number(invoice.id) || invoice.id, currency);
+      const payAmt = Math.ceil(min.minCrypto * 1e8) / 1e8;
+      const payment = await createPayment(
+        currency,
+        chargedUsd,
+        `${orderId}-m`,
+        description,
+        payAmt,
+      );
       if (payment.pay_address) {
-        return { mode: "payment", payment };
+        return {
+          mode: "payment",
+          payment,
+          requestedUsd: priceAmountUsd,
+          chargedUsd,
+        };
       }
+      lastErr = new Error("Payment created but address was empty");
     } catch (e) {
       lastErr = e;
-      hitMinAmount = hitMinAmount || isMinAmountError(e);
-      logger.warn({ e, invoiceId: invoice.id }, "invoice-payment failed — may use invoice link");
+      logger.warn({ e, orderId, currency }, "NOWPayments pay_amount override failed");
     }
+  }
+
+  // 3) Last resort: invoice → invoice-payment for a concrete address (still no external link UI)
+  try {
+    const invoice = await createInvoice(currency, chargedUsd, `${orderId}-inv`, description);
+    const payment = await createInvoicePayment(Number(invoice.id) || invoice.id, currency);
+    if (payment.pay_address) {
+      return {
+        mode: "payment",
+        payment,
+        requestedUsd: priceAmountUsd,
+        chargedUsd,
+      };
+    }
+    lastErr = new Error("Invoice payment had no address");
   } catch (e) {
     lastErr = e;
-    logger.warn({ e, orderId, currency }, "NOWPayments createInvoice failed");
+    logger.warn({ e, orderId, currency }, "NOWPayments invoice→address failed");
   }
 
-  // 3) Low-amount path: invoice link still works at $5 even when direct address min is ~$19
-  if (invoice?.invoice_url) {
-    return { mode: "invoice_link", invoice };
-  }
-
-  if (hitMinAmount) {
-    throw new Error(`Minimum deposit is $5 USD. Try again or pick another crypto.`);
+  if (isMinAmountError(lastErr)) {
+    throw new Error(
+      `Network minimum for this coin is about $${gatewayFloor.toFixed(2)}. Try that amount or another crypto.`,
+    );
   }
   const detail = lastErr ? String(lastErr).slice(0, 180) : "unknown error";
-  throw new Error(`Could not create deposit. ${detail}`);
+  throw new Error(`Could not create deposit address. ${detail}`);
 }
 
 /** Get a single payment by id (API key works). */

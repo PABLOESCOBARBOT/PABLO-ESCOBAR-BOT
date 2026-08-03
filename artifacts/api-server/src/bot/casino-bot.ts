@@ -977,12 +977,20 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       network?: string;
       paymentId: string;
       txId: number;
+      chargedUsd: number;
+      requestedUsd: number;
     }) => {
+      const bumped =
+        opts.chargedUsd > opts.requestedUsd + 0.009
+          ? `\n⚠️ Network minimum applied: you asked for <b>$${opts.requestedUsd.toFixed(2)}</b>, ` +
+            `address is for <b>$${opts.chargedUsd.toFixed(2)}</b> (you'll be credited $${opts.chargedUsd.toFixed(2)}).\n`
+          : "";
       await sendHtml(
         `📥 <b>Deposit — ${label}</b>\n\n` +
-          `💵 You pay for: <b>$${priceUsd.toFixed(2)} USD</b>\n` +
-          `🪙 Send exactly: <b>${opts.payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
-          `📬 Address:\n<code>${opts.payAddress}</code>\n\n` +
+          `💵 You pay for: <b>$${opts.chargedUsd.toFixed(2)} USD</b>\n` +
+          `🪙 Send exactly: <b>${opts.payAmount} ${payCurrency.toUpperCase()}</b>\n` +
+          bumped +
+          `\n📬 Address:\n<code>${opts.payAddress}</code>\n\n` +
           `Network: ${opts.network ?? addr?.network ?? label}\n` +
           `Deposit ID: #${opts.txId}\n\n` +
           `✅ After payment confirms, USD is added automatically.\n` +
@@ -1006,37 +1014,10 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         `Casino deposit — ${label} — user ${tgId}`,
       );
 
-      if (checkout.mode === "invoice_link") {
-        const invoiceId = String(checkout.invoice.id);
-        const tx = await createAutoDeposit(
-          tgId,
-          crypto,
-          String(priceUsd),
-          `inv-${invoiceId}`,
-          checkout.invoice.invoice_url,
-          orderId,
-        );
-        await sendHtml(
-          `📥 <b>Deposit — ${label}</b>\n\n` +
-            `💵 Amount: <b>$${priceUsd.toFixed(2)} USD</b>\n` +
-            `Min: <b>$${DEPOSIT_MIN_USD}</b>\n\n` +
-            `Tap below to get your deposit address, then send the exact crypto amount.\n` +
-            `✅ After payment confirms, USD is added automatically.\n\n` +
-            `Deposit ID: #${tx.id}`,
-          {
-            inline_keyboard: [
-              [{ text: "💳 Get Deposit Address", url: checkout.invoice.invoice_url }],
-              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-              [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
-            ],
-          },
-        );
-        return;
-      }
-
       const payment = checkout.payment;
       const paymentId = String(payment.payment_id);
-      const payAmount = payment.pay_amount ?? priceUsd;
+      const chargedUsd = checkout.chargedUsd;
+      const payAmount = payment.pay_amount ?? chargedUsd;
       const payAddress = payment.pay_address;
       if (!payAddress) {
         throw new Error("Empty deposit address from gateway");
@@ -1056,6 +1037,8 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         network: payment.network ?? undefined,
         paymentId,
         txId: tx.id,
+        chargedUsd,
+        requestedUsd: checkout.requestedUsd,
       });
     } catch (e) {
       logger.warn({ e, crypto, priceUsd, tgId }, "Deposit address create failed");
