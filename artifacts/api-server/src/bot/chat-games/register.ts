@@ -699,13 +699,8 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
   // /HouseBalance@Bot — public house bankroll (works in groups)
   bot.command(["housebalance", "house_balance", "house"], async (ctx) => {
     const bal = await getHouseBalance();
-    await ctx.reply(
-      `🏦 *House Balance*\n\n` +
-        `💰 *$${bal.toFixed(2)}*\n\n` +
-        `Wins are paid from this bank.\n` +
-        `Losses are added to this bank.`,
-      { parse_mode: "Markdown" },
-    );
+    const shown = Math.floor(bal).toLocaleString("en-US");
+    await ctx.reply(`💰 Available balance of the bot: $${shown}`);
   });
 
   // All cg| callbacks
