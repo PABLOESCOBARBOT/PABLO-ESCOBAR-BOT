@@ -32,9 +32,11 @@ export function raceKeyboard(matchId: string): InlineKeyboardMarkup {
 export function confirmKeyboard(matchId: string): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
-      [{ text: "Confirm", callback_data: `${CB}|confirm|${matchId}` }],
+      [
+        { text: "✅ Confirm", callback_data: `${CB}|confirm|${matchId}` },
+        { text: "❌ Cancel", callback_data: `${CB}|cancel|${matchId}` },
+      ],
       [{ text: "Back", callback_data: `${CB}|backrace|${matchId}` }],
-      [{ text: "Cancel", callback_data: `${CB}|cancel|${matchId}` }],
     ],
   };
 }
