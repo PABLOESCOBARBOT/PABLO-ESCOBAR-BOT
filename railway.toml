@@ -1,0 +1,14 @@
+# Deploy from GitHub → Railway (24/7, agent offline pe bhi chalega)
+# Dashboard: https://railway.app → New Project → Deploy from GitHub repo
+# Add Postgres plugin, then set Variables (see DEPLOY.md)
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+startCommand = "/entrypoint.sh"

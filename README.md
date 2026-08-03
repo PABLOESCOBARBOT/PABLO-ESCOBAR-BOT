@@ -23,3 +23,10 @@ pnpm --filter @workspace/api-server run dev
 ## Required env
 
 See `.env.example`.
+
+## Permanent 24/7 hosting
+
+Cursor / local agent offline = bot offline.  
+Deploy from GitHub so bots stay online:
+
+→ see **[DEPLOY.md](./DEPLOY.md)** (Railway recommended, or Docker VPS)
