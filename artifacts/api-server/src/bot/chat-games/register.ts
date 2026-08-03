@@ -106,9 +106,45 @@ function boardText(
 ): string {
   return (
     `${g.emoji} *${m.host.name}* vs *${guestName}*\n` +
-    `Bet *${m.bet}* · First to ${m.raceTo} · ${CHAT_PAYOUT_MULT}x\n` +
+    `Bet *$${m.bet}* · First to ${m.raceTo} · ${CHAT_PAYOUT_MULT}x\n` +
     `Score *${m.scoreHost}* — *${m.scoreGuest}*` +
     (extra ? `\n${extra}` : "")
+  );
+}
+
+/** Reference-style kickoff after opponent is set. */
+function matchAcceptedText(
+  g: ChatGameDefinition,
+  hostName: string,
+  guestName: string,
+  firstPrompt: string,
+): string {
+  return (
+    `${g.emoji} *Match accepted!*\n` +
+    `Player 1: ${hostName}\n` +
+    `Player 2: ${guestName}\n` +
+    firstPrompt
+  );
+}
+
+function money(amount: number): string {
+  return `$${amount.toFixed(2)}`;
+}
+
+/** Reference-style end screen. */
+function gameOverText(
+  hostName: string,
+  guestName: string,
+  scoreHost: number,
+  scoreGuest: number,
+  resultLine: string,
+): string {
+  return (
+    `🏆 *Game over!*\n` +
+    `*Score:*\n` +
+    `${hostName} • ${scoreHost}\n` +
+    `${guestName} • ${scoreGuest}\n` +
+    resultLine
   );
 }
 
@@ -220,24 +256,25 @@ async function runMatch(
   match.scoreGuest = 0;
   match.round = 0;
   chatStore.save(match);
+
+  const plan = g.throwPlan?.(mode);
+  const firstPrompt = plan
+    ? `${match.host.name}, your turn! To start, send this emoji: ${plan.emoji}`
+    : `${match.host.name}, your turn!`;
+
   await editMsg(
     bot.telegram,
     match.chatId,
     boardId,
-    boardText(g, match, guestName, "_Playing…_"),
+    matchAcceptedText(g, match.host.name, guestName, firstPrompt),
   );
 
-  let lastRolls = "";
+  let lastDiceMsgId = boardId;
+  let hostAlreadyPrompted = Boolean(plan); // kickoff message already asked host to throw
 
   while (match.scoreHost < raceTo && match.scoreGuest < raceTo) {
     match.round += 1;
     chatStore.save(match);
-    await editMsg(
-      bot.telegram,
-      match.chatId,
-      boardId,
-      boardText(g, match, guestName, `Round ${match.round}`),
-    );
 
     let hostDisplay: string;
     let guestDisplay: string;
@@ -245,19 +282,23 @@ async function runMatch(
     let guestValue: number;
     let winner: "host" | "guest" | "draw";
 
-    const plan = g.throwPlan?.(mode);
     if (plan) {
-      // User / host first, then bot or opponent
       const hostResult = await collectThrows(
         bot,
         match.chatId,
         match.host,
         false,
         plan,
-        boardId,
+        lastDiceMsgId,
+        {
+          skipFirstPrompt: hostAlreadyPrompted && match.round === 1,
+          opener: match.round === 1,
+        },
       );
       hostValue = hostResult.value;
       hostDisplay = hostResult.display;
+      lastDiceMsgId = hostResult.lastMsgId;
+      hostAlreadyPrompted = false;
 
       const guestResult = await collectThrows(
         bot,
@@ -265,10 +306,12 @@ async function runMatch(
         { userId: match.guest?.userId ?? "bot", name: guestName },
         match.opponent === "bot",
         plan,
-        boardId,
+        lastDiceMsgId,
+        { skipFirstPrompt: false, opener: false },
       );
       guestValue = guestResult.value;
       guestDisplay = guestResult.display;
+      lastDiceMsgId = guestResult.lastMsgId;
 
       winner = plan.decide
         ? plan.decide(hostResult, guestResult)
@@ -279,12 +322,6 @@ async function runMatch(
             : "draw";
     } else {
       const round = g.playRound(mode);
-      await editMsg(
-        bot.telegram,
-        match.chatId,
-        boardId,
-        boardText(g, match, guestName, "Rolling…"),
-      );
       await sleep(600);
       hostValue = round.hostValue;
       guestValue = round.guestValue;
@@ -298,12 +335,7 @@ async function runMatch(
     chatStore.save(match);
 
     const matchOver = match.scoreHost >= raceTo || match.scoreGuest >= raceTo;
-    const rolls =
-      `*${match.host.name}* ${hostDisplay}  ·  *${guestName}* ${guestDisplay}`;
-    lastRolls = rolls;
-
     if (!matchOver) {
-      // Mid-race only — one short line, reply to board so busy chats stay clear
       const point =
         winner === "draw"
           ? "Draw"
@@ -313,8 +345,9 @@ async function runMatch(
       await say(
         bot,
         match.chatId,
-        `${rolls}\n${point} · Score *${match.scoreHost}*—*${match.scoreGuest}*`,
-        boardId,
+        `${match.host.name} ${hostDisplay} · ${guestName} ${guestDisplay}\n` +
+          `${point} · Score *${match.scoreHost}* — *${match.scoreGuest}*`,
+        lastDiceMsgId,
       );
     }
     await editMsg(
@@ -363,25 +396,27 @@ async function runMatch(
     });
   }
 
-  const moneyLine = hostWon
-    ? `*${winnerName}* wins · *+${payout}* USD`
+  const resultLine = hostWon
+    ? `🎉 Congratulations, ${winnerName}! You won ${money(payout)}!`
     : match.opponent === "bot"
-      ? `*Bot* wins · *${match.host.name}* lost ${match.bet}`
-      : `*${winnerName}* wins · *+${payout}* USD`;
+      ? `😔 Sorry, ${match.host.name}! You lost ${money(match.bet)}!`
+      : `🎉 Congratulations, ${winnerName}! You won ${money(payout)}!`;
 
-  const finalMsg =
-    `${g.emoji} ${lastRolls}\n` +
-    `${moneyLine}\n` +
-    `Score *${match.scoreHost}* — *${match.scoreGuest}* · Bet ${match.bet}`;
+  const finalMsg = gameOverText(
+    match.host.name,
+    guestName,
+    match.scoreHost,
+    match.scoreGuest,
+    resultLine,
+  );
 
   match.status = "finished";
   chatStore.save(match);
 
-  // Fresh result message — board scrolls away fast in busy groups
   try {
     await bot.telegram.sendMessage(match.chatId, finalMsg, {
       parse_mode: "Markdown",
-      reply_to_message_id: boardId,
+      reply_to_message_id: lastDiceMsgId,
       reply_markup: playAgainKeyboard(g.command, match.bet),
     });
   } catch {
@@ -399,7 +434,14 @@ async function runMatch(
   chatStore.delete(match.id);
 }
 
-/** Collect throws: humans get one short named prompt; bot just throws (no spam). */
+type ThrowOpts = {
+  /** Kickoff message already told this player to throw. */
+  skipFirstPrompt: boolean;
+  /** First throw of the match — "To start, send this emoji". */
+  opener: boolean;
+};
+
+/** Collect throws: DiceGamble-style named turn prompts; reply to last dice. */
 async function collectThrows(
   bot: Telegraf<ChatBotContext>,
   chatId: number,
@@ -407,31 +449,42 @@ async function collectThrows(
   isBot: boolean,
   plan: ThrowPlan,
   replyTo: number,
-): Promise<{ value: number; display: string }> {
+  opts: ThrowOpts,
+): Promise<{ value: number; display: string; lastMsgId: number }> {
   const values: number[] = [];
+  let lastMsgId = replyTo;
+
   for (let i = 0; i < plan.throws; i++) {
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
-      // No "my turn" text — the animated emoji is the turn
-      values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
+      await say(bot, chatId, `${player.name}, your turn!`, lastMsgId);
+      const thrown = await botThrowDice(bot.telegram, chatId, plan.emoji, lastMsgId);
+      values.push(thrown.value);
+      lastMsgId = thrown.messageId;
     } else {
-      await say(
-        bot,
-        chatId,
-        `*${player.name}* — send ${plan.emoji}${nLabel}`,
-        replyTo,
-      );
+      const skip = opts.skipFirstPrompt && i === 0;
+      if (!skip) {
+        const prompt =
+          opts.opener && i === 0
+            ? `${player.name}, your turn! To start, send this emoji: ${plan.emoji}${nLabel}`
+            : `${player.name}, your turn!${nLabel ? ` Send ${plan.emoji}${nLabel}` : ""}`;
+        await say(bot, chatId, prompt, lastMsgId);
+      }
       try {
-        const v = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
-        values.push(v);
+        const thrown = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
+        values.push(thrown.value);
+        lastMsgId = thrown.messageId;
         await sleep(diceAnimMs(plan.emoji));
       } catch {
-        await say(bot, chatId, `*${player.name}* late — auto ${plan.emoji}`, replyTo);
-        values.push(await botThrowDice(bot.telegram, chatId, plan.emoji));
+        await say(bot, chatId, `${player.name} late — auto ${plan.emoji}`, lastMsgId);
+        const thrown = await botThrowDice(bot.telegram, chatId, plan.emoji, lastMsgId);
+        values.push(thrown.value);
+        lastMsgId = thrown.messageId;
       }
     }
   }
-  return plan.combine(values);
+  const combined = plan.combine(values);
+  return { ...combined, lastMsgId };
 }
 
 function diceAnimMs(emoji: string): number {
@@ -457,7 +510,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
     const uid = String(ctx.from.id);
     const chatId = ctx.chat.id;
     // Don't spam ack — just resolve the pending throw (animation already visible)
-    resolveUserDice(chatId, uid, dice.emoji, dice.value);
+    resolveUserDice(chatId, uid, dice.emoji, dice.value, ctx.message.message_id);
   });
 
   for (const g of chatGames) {

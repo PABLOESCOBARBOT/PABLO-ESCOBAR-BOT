@@ -58,11 +58,15 @@ export function waitingKeyboard(matchId: string): InlineKeyboardMarkup {
   };
 }
 
+/** Reference-style end-game actions. */
 export function playAgainKeyboard(gameCmd: string, bet: number): InlineKeyboardMarkup {
+  const doubled = Math.min(bet * 2, 1_000_000);
   return {
     inline_keyboard: [
-      [{ text: `Play again (${bet})`, callback_data: `${CB}|again|${gameCmd}|${bet}` }],
-      [{ text: "Done", callback_data: `${CB}|done` }],
+      [
+        { text: "🔄 Play Again", callback_data: `${CB}|again|${gameCmd}|${bet}` },
+        { text: "🔄 Double", callback_data: `${CB}|again|${gameCmd}|${doubled}` },
+      ],
     ],
   };
 }

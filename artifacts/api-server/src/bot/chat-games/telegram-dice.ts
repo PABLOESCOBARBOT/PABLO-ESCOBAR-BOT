@@ -4,11 +4,16 @@ import { sleep } from "./animate";
 /** All Telegram animated dice / activity emojis we support in chat duels. */
 export type TgDiceEmoji = "🎲" | "🎯" | "🏀" | "⚽" | "🎳" | "🎰";
 
+export type DiceThrowResult = {
+  value: number;
+  messageId: number;
+};
+
 type Pending = {
   userId: string;
   chatId: number;
   emoji: TgDiceEmoji;
-  resolve: (value: number) => void;
+  resolve: (result: DiceThrowResult) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
@@ -35,6 +40,7 @@ export function resolveUserDice(
   userId: string,
   emoji: string,
   value: number,
+  messageId: number,
 ): boolean {
   const k = key(chatId, userId);
   const p = pending.get(k);
@@ -42,7 +48,7 @@ export function resolveUserDice(
   if (p.emoji !== emoji) return false;
   clearTimeout(p.timer);
   pending.delete(k);
-  p.resolve(value);
+  p.resolve({ value, messageId });
   return true;
 }
 
@@ -52,7 +58,7 @@ export function waitForUserDice(
   userId: string,
   emoji: TgDiceEmoji,
   timeoutMs = 45_000,
-): Promise<number> {
+): Promise<DiceThrowResult> {
   cancelPendingThrow(chatId, userId);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -70,18 +76,22 @@ export function waitForUserDice(
   });
 }
 
-/** Bot throws a real Telegram animated emoji and returns its value. */
+/** Bot throws a real Telegram animated emoji and returns its value + message id. */
 export async function botThrowDice(
   telegram: Telegram,
   chatId: number,
   emoji: TgDiceEmoji,
-): Promise<number> {
-  const msg = await telegram.sendDice(chatId, { emoji });
+  replyTo?: number,
+): Promise<DiceThrowResult> {
+  const msg = await telegram.sendDice(chatId, {
+    emoji,
+    ...(replyTo ? { reply_to_message_id: replyTo } : {}),
+  });
   const value = msg.dice?.value;
   // Only wait until the emoji animation stops — then continue immediately
   await sleep(emoji === "🎰" ? 2500 : 4000);
   if (typeof value !== "number") throw new Error("dice value missing");
-  return value;
+  return { value, messageId: msg.message_id };
 }
 
 export function isPendingThrow(chatId: number, userId: string): boolean {
