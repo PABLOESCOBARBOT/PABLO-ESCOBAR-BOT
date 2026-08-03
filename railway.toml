@@ -1,14 +1,15 @@
-# Deploy from GitHub → Railway (24/7, agent offline pe bhi chalega)
-# Dashboard: https://railway.app → New Project → Deploy from GitHub repo
-# Add Postgres plugin, then set Variables (see DEPLOY.md)
+# Railway 24/7 deploy (GitHub → this branch)
+# 1) Service Settings → Source → branch: cursor/fix-casino-bot-bugs-93df
+# 2) Add Postgres plugin
+# 3) Variables → Raw Editor → paste from DEPLOY.md
 
 [build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+builder = "NIXPACKS"
+buildCommand = "corepack enable && corepack prepare pnpm@10.33.3 --activate && sed -i 's/minimumReleaseAge: 1440/minimumReleaseAge: 0/' pnpm-workspace.yaml && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"
 
 [deploy]
+startCommand = "pnpm --filter @workspace/db run push && node --enable-source-maps artifacts/api-server/dist/index.mjs"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/health"
-healthcheckTimeout = 30
-startCommand = "/entrypoint.sh"
+healthcheckTimeout = 60
