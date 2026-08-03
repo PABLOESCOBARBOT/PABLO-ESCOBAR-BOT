@@ -98,9 +98,23 @@ function setupText(g: ChatGameDefinition, m: ChatMatch, stage: string): string {
   );
 }
 
-/** Reference confirm card — only bet line. */
-function confirmBetText(_g: ChatGameDefinition, m: ChatMatch): string {
-  return `*Your bet: ${money(m.bet)}* 🔥`;
+/** Game confirmation card (shown after mode + race are chosen). */
+function confirmBetText(g: ChatGameDefinition, m: ChatMatch): string {
+  const race = m.raceTo ?? 1;
+  const pointWord = race === 1 ? "point" : "points";
+  const mode = m.mode ? MODE_LABELS[m.mode] : "—";
+  const gameName = g.command.charAt(0).toUpperCase() + g.command.slice(1);
+  const mult = Number.isInteger(CHAT_PAYOUT_MULT)
+    ? String(CHAT_PAYOUT_MULT)
+    : CHAT_PAYOUT_MULT.toFixed(2);
+  return (
+    `${g.emoji} *Game confirmation*\n\n` +
+    `Game: ${gameName} ${g.emoji}\n` +
+    `First to ${race} ${pointWord}\n` +
+    `Mode: ${mode}\n` +
+    `Your bet: ${money(m.bet)}\n` +
+    `Win multiplier: ${mult}x`
+  );
 }
 
 /**
