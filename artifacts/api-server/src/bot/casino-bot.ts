@@ -23,14 +23,18 @@ import {
   getUserWithdrawals,
   countUserPendingWithdrawals,
   cancelUserWithdrawal,
+  bindWithdrawalPayoutId,
   InsufficientChipsError,
 } from "./db-helpers";
 import { notifyAdmins } from "./bot-notify";
 import {
   isNowPaymentsEnabled,
+  isNowPaymentsPayoutEnabled,
   createDepositCheckout,
   getPayment,
   isPaymentComplete,
+  estimateAmount,
+  createPayout,
   NOWPAYMENTS_CURRENCY_MAP,
 } from "./nowpayments";
 
@@ -904,10 +908,47 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         return;
       }
 
-      // Invoice mode — address is on NOWPayments page (supports $5 when /payment min is higher)
+      // Invoice mode — prefer invoice-payment (pollable payment_id + address)
       const invoice = checkout.invoice;
       const invoiceId = String(invoice.id);
       const payUrl = invoice.invoice_url;
+      const linked = checkout.payment;
+
+      if (linked?.payment_id && linked.pay_address) {
+        const paymentId = String(linked.payment_id);
+        const payAmount = linked.pay_amount ?? priceUsd;
+        const payAddress = linked.pay_address;
+        const tx = await createAutoDeposit(
+          tgId,
+          crypto,
+          String(payAmount),
+          paymentId,
+          payAddress,
+          orderId,
+        );
+
+        await ctx.editMessageText(
+          `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
+            `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} USD</b>\n` +
+            `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
+            `📬 Address:\n<code>${payAddress}</code>\n\n` +
+            `Payment ID: <code>${paymentId}</code>\n` +
+            `Invoice: <code>${invoiceId}</code>\n` +
+            `Deposit ID: #${tx.id}\n\n` +
+            `✅ After blockchain confirm, USD credits automatically.`,
+          {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                ...(payUrl ? [[{ text: `💳 Open Checkout`, url: payUrl }]] : []),
+                [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
+                [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
+              ],
+            },
+          },
+        );
+        return;
+      }
 
       const tx = await createAutoDeposit(
         tgId,
@@ -970,10 +1011,13 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       return;
     }
 
-    // Invoice checkout — address is on NOWPayments page; status via IPN/poller after pay
+    // Invoice-only checkout — still waiting for payment_id bind via IPN/JWT list
     if (tx.txHash.startsWith("inv-")) {
       const payUrl = tx.walletAddress;
-      await ctx.answerCbQuery("Open Pay Now to see address. After paying, wait for auto-credit.", { show_alert: true });
+      await ctx.answerCbQuery(
+        "Waiting for blockchain payment. Keep this open — USD auto-credits after confirm.",
+        { show_alert: true },
+      );
       if (payUrl?.startsWith("http")) {
         await ctx.editMessageReplyMarkup({
           inline_keyboard: [
@@ -1136,6 +1180,37 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     delete ctx.session.pendingWithdrawAddress;
     delete ctx.session.awaitingWithdrawAddress;
 
+    let autoPayoutLine = "🔒 USD locked. Admin will pay soon.";
+    let payoutStarted = false;
+
+    // Optional: auto on-chain payout via NOWPayments mass payouts (JWT)
+    if (isNowPaymentsPayoutEnabled()) {
+      try {
+        const npCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto] ?? crypto;
+        const cryptoAmt = await estimateAmount(chips, "usd", npCurrency);
+        if (cryptoAmt && cryptoAmt > 0) {
+          const payout = await createPayout({
+            address,
+            currency: npCurrency,
+            amountCrypto: cryptoAmt,
+            uniqueExternalId: `wd-${tx.id}`,
+          });
+          const payoutId = payout?.withdrawal?.id ?? payout?.withdrawal?.withdrawal_id ?? payout?.batchId;
+          if (payoutId) {
+            await bindWithdrawalPayoutId(tx.id, String(payoutId), String(cryptoAmt));
+            payoutStarted = true;
+            autoPayoutLine =
+              `⚡ Auto payout started via NOWPayments (~${cryptoAmt} ${npCurrency.toUpperCase()}).\n` +
+              `You'll be notified when it confirms on-chain.`;
+          }
+        }
+      } catch (e) {
+        logger.warn({ e, txId: tx.id }, "NOWPayments auto payout failed — admin will pay manually");
+        autoPayoutLine =
+          "⚡ Auto payout unavailable right now. Admin will pay manually.";
+      }
+    }
+
     // Notify admins with approve/reject buttons
     await notifyAdmins(
       `📤 <b>New Withdrawal Request</b>\n\n` +
@@ -1144,7 +1219,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         `Amount: <b>${chips} USD ($${chips})</b>\n` +
         `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
         `Address:\n<code>${address}</code>\n\n` +
-        `Send crypto, then tap Paid.`,
+        (payoutStarted
+          ? `⚡ NOWPayments auto-payout queued. Confirm/2FA in dashboard if required.`
+          : `Send crypto, then tap Paid.`),
       {
         reply_markup: {
           inline_keyboard: [
@@ -1165,7 +1242,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         `Amount: <b>${chips} USD ($${chips})</b>\n` +
         `Crypto: <b>${crypto.toUpperCase()}</b>\n` +
         `Address:\n<code>${address}</code>\n\n` +
-        `🔒 USD locked. Admin will pay soon.\n` +
+        `${autoPayoutLine}\n` +
         `💼 Remaining balance: <b>${newBal.toFixed(0)} USD</b>`,
       {
         parse_mode: "HTML",

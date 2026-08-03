@@ -407,12 +407,14 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         `📋 *Static Addresses (Manual)*\n` +
         `Set your own wallet address per crypto. Users send funds to your address and submit the TX hash. You approve manually.\n\n` +
         `🤖 *NOWPayments Gateway (Auto)*\n` +
-        `Each user gets a unique invoice URL. Payments are detected via IPN/polling and USD are credited automatically.\n\n` +
+        `Deposits: blockchain confirm → USD auto-credit.\n` +
+        `Withdrawals: optional auto LTC payout (email/password JWT).\n\n` +
         `To set up NOWPayments:\n` +
         `1. https://account.nowpayments.io\n` +
-        `2. Copy API key → \`NOWPAYMENTS_API_KEY\`\n` +
-        `3. Copy IPN secret → \`NOWPAYMENTS_IPN_SECRET\`\n` +
-        `4. Set \`PUBLIC_BASE_URL\` to your HTTPS domain`,
+        `2. API key → \`NOWPAYMENTS_API_KEY\`\n` +
+        `3. IPN secret → \`NOWPAYMENTS_IPN_SECRET\`\n` +
+        `4. Public URL → \`PUBLIC_BASE_URL\`\n` +
+        `5. (Payouts) \`NOWPAYMENTS_EMAIL\` + \`NOWPAYMENTS_PASSWORD\``,
         {
           parse_mode: "Markdown",
           reply_markup: adminPaymentSettingsMenu(),
@@ -424,20 +426,27 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data === "admin_nowpayments_info" || data === "admin_cryptopay_info") {
       const apiKey = process.env["NOWPAYMENTS_API_KEY"];
       const ipn = process.env["NOWPAYMENTS_IPN_SECRET"];
+      const pub = process.env["PUBLIC_BASE_URL"] || process.env["NOWPAYMENTS_IPN_URL"];
+      const email = process.env["NOWPAYMENTS_EMAIL"];
       const status = apiKey ? "✅ API key set" : "❌ Not configured";
       const ipnStatus = ipn ? "✅ IPN secret set" : "⚠️ Missing IPN secret";
+      const pubStatus = pub ? "✅ Public/IPN URL set" : "⚠️ Missing PUBLIC_BASE_URL";
+      const payoutStatus = email ? "✅ Payout login set" : "⚠️ Payouts manual (no email/password)";
       await ctx.editMessageText(
         `🤖 *NOWPayments Gateway*\n\n` +
         `API: ${status}\n` +
-        `IPN: ${ipnStatus}\n\n` +
+        `IPN: ${ipnStatus}\n` +
+        `URL: ${pubStatus}\n` +
+        `Payouts: ${payoutStatus}\n\n` +
         `*How to set up:*\n` +
         `1. Create account at nowpayments.io\n` +
         `2. Settings → API keys → \`NOWPAYMENTS_API_KEY\`\n` +
         `3. Settings → IPN Secret → \`NOWPAYMENTS_IPN_SECRET\`\n` +
-        `4. Set public URL: \`PUBLIC_BASE_URL=https://your-domain\`\n` +
-        `   IPN path: \`/api/nowpayments/ipn\`\n\n` +
+        `4. Railway public URL → \`PUBLIC_BASE_URL\`\n` +
+        `   IPN path: \`/api/nowpayments/ipn\`\n` +
+        `5. For auto withdrawals: \`NOWPAYMENTS_EMAIL\` + \`NOWPAYMENTS_PASSWORD\`\n\n` +
         `Supported: USDT (TRC20/ERC20), BTC, ETH, TON, BNB, LTC\n\n` +
-        `Users get auto USD credit + Telegram notify when paid! 🔔`,
+        `Deposits auto-credit USD after blockchain confirm 🔔`,
         {
           parse_mode: "Markdown",
           reply_markup: {

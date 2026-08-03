@@ -243,22 +243,29 @@ export async function createAutoDeposit(
   return rows[0]!;
 }
 
-/** Find a pending deposit by invoice/payment id stored in txHash */
+/** Find a pending deposit by invoice/payment id stored in txHash (supports inv- prefix). */
 export async function findDepositByInvoiceId(invoiceId: string): Promise<Transaction | null> {
-  const rows = await db
-    .select()
-    .from(transactionsTable)
-    .where(
-      and(
-        eq(transactionsTable.txHash, invoiceId),
-        eq(transactionsTable.status, "pending"),
-      ),
-    )
-    .limit(1);
-  return rows[0] ?? null;
+  const raw = invoiceId.replace(/^inv-/, "");
+  const candidates = [invoiceId, raw, `inv-${raw}`];
+
+  for (const id of candidates) {
+    const rows = await db
+      .select()
+      .from(transactionsTable)
+      .where(
+        and(
+          eq(transactionsTable.txHash, id),
+          eq(transactionsTable.status, "pending"),
+          eq(transactionsTable.type, "deposit"),
+        ),
+      )
+      .limit(1);
+    if (rows[0]) return rows[0];
+  }
+  return null;
 }
 
-/** Pending NOWPayments deposits — txHash holds payment_id */
+/** Pending NOWPayments deposits — numeric payment_id in txHash (pollable). */
 export async function getPendingNowPaymentsPaymentIds(): Promise<string[]> {
   const rows = await db
     .select({ txHash: transactionsTable.txHash, note: transactionsTable.note })
@@ -275,6 +282,103 @@ export async function getPendingNowPaymentsPaymentIds(): Promise<string[]> {
     .filter((r) => r.note?.startsWith("NOWPayments order ") && r.txHash)
     .map((r) => r.txHash!)
     .filter((id) => /^\d+$/.test(id));
+}
+
+/** Pending NOWPayments invoice-only deposits (txHash = inv-<id>). */
+export async function getPendingNowPaymentsInvoiceDeposits(): Promise<
+  Array<{ id: number; txHash: string; note: string | null; orderId: string | null }>
+> {
+  const rows = await db
+    .select({
+      id: transactionsTable.id,
+      txHash: transactionsTable.txHash,
+      note: transactionsTable.note,
+    })
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.type, "deposit"),
+        eq(transactionsTable.status, "pending"),
+      ),
+    )
+    .limit(100);
+
+  return rows
+    .filter((r) => r.note?.startsWith("NOWPayments order ") && r.txHash?.startsWith("inv-"))
+    .map((r) => ({
+      id: r.id,
+      txHash: r.txHash!,
+      note: r.note,
+      orderId: r.note?.replace(/^NOWPayments order /, "") ?? null,
+    }));
+}
+
+/** Upgrade invoice deposit to numeric payment_id so the poller can track it. */
+export async function bindDepositPaymentId(txId: number, paymentId: string): Promise<void> {
+  if (!/^\d+$/.test(paymentId)) return;
+  await db
+    .update(transactionsTable)
+    .set({ txHash: paymentId })
+    .where(
+      and(
+        eq(transactionsTable.id, txId),
+        eq(transactionsTable.status, "pending"),
+        eq(transactionsTable.type, "deposit"),
+      ),
+    );
+}
+
+/** Mark withdrawal with NOWPayments payout/batch id for status tracking. */
+export async function bindWithdrawalPayoutId(
+  txId: number,
+  payoutId: string,
+  cryptoAmount?: string,
+): Promise<void> {
+  await db
+    .update(transactionsTable)
+    .set({
+      txHash: `np-payout-${payoutId}`,
+      ...(cryptoAmount ? { cryptoAmount } : {}),
+      note: `NOWPayments payout ${payoutId}`,
+    })
+    .where(
+      and(
+        eq(transactionsTable.id, txId),
+        eq(transactionsTable.status, "pending"),
+        eq(transactionsTable.type, "withdrawal"),
+      ),
+    );
+}
+
+export async function findWithdrawalByPayoutId(payoutId: string): Promise<Transaction | null> {
+  const candidates = [`np-payout-${payoutId}`, payoutId];
+  for (const id of candidates) {
+    const byHash = await db
+      .select()
+      .from(transactionsTable)
+      .where(
+        and(
+          eq(transactionsTable.txHash, id),
+          eq(transactionsTable.status, "pending"),
+          eq(transactionsTable.type, "withdrawal"),
+        ),
+      )
+      .limit(1);
+    if (byHash[0]) return byHash[0];
+  }
+
+  const byNote = await db
+    .select()
+    .from(transactionsTable)
+    .where(
+      and(
+        eq(transactionsTable.status, "pending"),
+        eq(transactionsTable.type, "withdrawal"),
+        eq(transactionsTable.note, `NOWPayments payout ${payoutId}`),
+      ),
+    )
+    .limit(1);
+  return byNote[0] ?? null;
 }
 
 /** Find a pending deposit by NOWPayments order_id stored in note: "NOWPayments order <id>" */

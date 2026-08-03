@@ -2,10 +2,21 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { createCasinoBot } from "./bot/casino-bot";
 import { createAdminBot } from "./bot/admin-bot";
-import { isNowPaymentsEnabled, startPaymentPoller } from "./bot/nowpayments";
+import {
+  isNowPaymentsEnabled,
+  startPaymentPoller,
+  listRecentPayments,
+  isPaymentComplete,
+  getIpnCallbackUrl,
+} from "./bot/nowpayments";
 import { handlePaidPayment } from "./routes/nowpayments-ipn";
 import { setCasinoBotForNotifications, setAdminBotForNotifications } from "./bot/bot-notify";
-import { getPendingNowPaymentsPaymentIds } from "./bot/db-helpers";
+import {
+  getPendingNowPaymentsPaymentIds,
+  getPendingNowPaymentsInvoiceDeposits,
+  bindDepositPaymentId,
+  findDepositByOrderId,
+} from "./bot/db-helpers";
 import { chatGameMenuCommands } from "./bot/chat-games/register";
 import { ensureSchema } from "./ensure-schema";
 
@@ -68,8 +79,52 @@ async function boot(): Promise<void> {
     logger.info("🎰 Casino Bot started (polling)");
 
     if (isNowPaymentsEnabled()) {
-      logger.info("🔔 NOWPayments enabled — starting payment poller (30s interval)");
-      const poller = startPaymentPoller(30_000, handlePaidPayment, getPendingNowPaymentsPaymentIds);
+      const ipn = getIpnCallbackUrl();
+      logger.info(
+        { ipn: ipn ?? null },
+        "🔔 NOWPayments enabled — deposit poller every 30s (blockchain confirm → auto USD credit)",
+      );
+      if (!ipn) {
+        logger.warn(
+          "PUBLIC_BASE_URL missing — set Railway public URL so NOWPayments IPN can hit /api/nowpayments/ipn",
+        );
+      }
+
+      const resolveInvoices = async () => {
+        const invoices = await getPendingNowPaymentsInvoiceDeposits();
+        if (invoices.length === 0) return;
+        const recent = await listRecentPayments(80);
+        for (const inv of invoices) {
+          const match = recent.find((p) => {
+            const orderOk = inv.orderId && String(p.order_id ?? "") === inv.orderId;
+            const invOk =
+              p.invoice_id != null &&
+              (`inv-${p.invoice_id}` === inv.txHash || String(p.invoice_id) === inv.txHash.replace(/^inv-/, ""));
+            return Boolean(orderOk || invOk);
+          });
+          if (!match) continue;
+          const paymentId = String(match.payment_id);
+          if (/^\d+$/.test(paymentId)) {
+            await bindDepositPaymentId(inv.id, paymentId);
+          }
+          if (isPaymentComplete(match.payment_status)) {
+            await handlePaidPayment(match);
+          } else if (inv.orderId) {
+            // ensure order match path still works even before bind
+            const tx = await findDepositByOrderId(inv.orderId);
+            if (tx && isPaymentComplete(match.payment_status)) {
+              await handlePaidPayment(match);
+            }
+          }
+        }
+      };
+
+      const poller = startPaymentPoller(
+        30_000,
+        handlePaidPayment,
+        getPendingNowPaymentsPaymentIds,
+        resolveInvoices,
+      );
       process.once("SIGINT", () => clearInterval(poller));
       process.once("SIGTERM", () => clearInterval(poller));
     } else {
