@@ -5,11 +5,15 @@ import {
   gameSessionsTable,
   pvpChallengesTable,
   depositAddressesTable,
+  houseBankTable,
   type User,
   type Transaction,
   type DepositAddress,
 } from "@workspace/db";
 import { eq, sql, desc, and, gte, isNull } from "drizzle-orm";
+
+/** Starting house bankroll shown on /housebalance */
+export const HOUSE_BANK_START = 15_000;
 
 class InsufficientChipsError extends Error {
   constructor(message = "Insufficient USD") {
@@ -175,6 +179,54 @@ export async function recordGame(
     result,
     gameData: gameData ? JSON.stringify(gameData) : null,
   });
+
+  // House bank: wins pay from house, losses increase house (skip PvP)
+  const opponent = gameData?.["opponent"];
+  if (opponent === "pvp" || gameData?.["house"] === false) return;
+  try {
+    if (result === "win" && payout > 0) {
+      await adjustHouseBalance(-payout);
+    } else if (result === "loss" && betAmount > 0) {
+      await adjustHouseBalance(betAmount);
+    }
+  } catch (e) {
+    console.error("house bank adjust failed", e);
+  }
+}
+
+// ─── House bank ───────────────────────────────────────────────────────────────
+
+async function ensureHouseBankRow(): Promise<void> {
+  await db
+    .insert(houseBankTable)
+    .values({ id: 1, balance: String(HOUSE_BANK_START) })
+    .onConflictDoNothing();
+}
+
+export async function getHouseBalance(): Promise<number> {
+  await ensureHouseBankRow();
+  const rows = await db.select().from(houseBankTable).where(eq(houseBankTable.id, 1)).limit(1);
+  return rows[0] ? parseFloat(rows[0].balance) : HOUSE_BANK_START;
+}
+
+/** Positive delta = house gains (user lost). Negative = house pays (user won). */
+export async function adjustHouseBalance(delta: number): Promise<number> {
+  await ensureHouseBankRow();
+  const updated = await db
+    .update(houseBankTable)
+    .set({
+      balance: sql`(${houseBankTable.balance}::numeric + ${delta.toFixed(2)})`,
+      updatedAt: new Date(),
+    })
+    .where(eq(houseBankTable.id, 1))
+    .returning();
+  return parseFloat(updated[0]!.balance);
+}
+
+/** True if house can cover a potential payout for a vs-bot bet. */
+export async function houseCanCover(payout: number): Promise<boolean> {
+  const bal = await getHouseBalance();
+  return bal + 0.001 >= payout;
 }
 
 export async function getRecentGames(telegramId: string, limit = 5) {

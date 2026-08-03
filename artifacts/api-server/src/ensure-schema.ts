@@ -79,5 +79,17 @@ export async function ensureSchema(): Promise<void> {
       WHERE referral_code IS NOT NULL;
   `);
 
+  // House bank — starts at $15,000; wins pay from here, losses add here
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS house_bank (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      balance NUMERIC(20, 2) NOT NULL DEFAULT '15000',
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO house_bank (id, balance)
+      VALUES (1, 15000)
+      ON CONFLICT (id) DO NOTHING;
+  `);
+
   logger.info("DB schema ready");
 }

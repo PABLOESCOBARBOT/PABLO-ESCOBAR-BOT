@@ -6,6 +6,8 @@ import {
   deductChips,
   addChips,
   recordGame,
+  getHouseBalance,
+  houseCanCover,
   InsufficientChipsError,
 } from "../db-helpers";
 import { editMsg, sleep } from "./animate";
@@ -594,7 +596,7 @@ export function gameGuideText(g: ChatGameDefinition): string {
     `1. Open our public chat: ${CASINO_CHAT_GROUP}\n` +
     `2. Send \`/${g.command} <bet>\` (example: \`/${g.command} 1\`)\n` +
     `3. Pick mode → race → confirm → Bot or Player\n` +
-    `4. When it's your turn, send ${g.emoji} (the animated sticker)\n\n` +
+    `4. When it's your turn, *reply* with ${g.emoji} (animated sticker — bot will wait for you)\n\n` +
     `Payout: *${CHAT_PAYOUT_MULT}x* · Min bet: *$1*\n` +
     `Tap *Open chat* below to join ${CASINO_CHAT_GROUP}`
   );
@@ -690,6 +692,18 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
         `Min *${CHAT_MIN_BET}* · Payout *${CHAT_PAYOUT_MULT}x*\n\n` +
         lines.join("\n") +
         `\n\nExample: \`/dice 1\``,
+      { parse_mode: "Markdown" },
+    );
+  });
+
+  // /HouseBalance@Bot — public house bankroll (works in groups)
+  bot.command(["housebalance", "house_balance", "house"], async (ctx) => {
+    const bal = await getHouseBalance();
+    await ctx.reply(
+      `🏦 *House Balance*\n\n` +
+        `💰 *$${bal.toFixed(2)}*\n\n` +
+        `Wins are paid from this bank.\n` +
+        `Losses are added to this bank.`,
       { parse_mode: "Markdown" },
     );
   });
@@ -852,6 +866,15 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
         if (uid !== match.host.userId) return ctx.answerCbQuery("Host only", { show_alert: true });
         const kind = parts[3];
         if (kind === "bot") {
+          const maxPayout = Math.floor(match.bet * CHAT_PAYOUT_MULT * 100) / 100;
+          if (!(await houseCanCover(maxPayout))) {
+            const houseBal = await getHouseBalance();
+            await ctx.answerCbQuery(
+              `House bank too low ($${houseBal.toFixed(0)}). Try a smaller bet.`,
+              { show_alert: true },
+            );
+            return;
+          }
           match.opponent = "bot";
           match.guest = { userId: "bot", name: "Bot" };
           chatStore.save(match);

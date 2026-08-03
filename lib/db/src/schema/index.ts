@@ -85,6 +85,15 @@ export const insertPvpChallengeSchema = createInsertSchema(pvpChallengesTable).o
 export type InsertPvpChallenge = z.infer<typeof insertPvpChallengeSchema>;
 export type PvpChallenge = typeof pvpChallengesTable.$inferSelect;
 
+// ─── House bank (shared casino balance for bot games) ─────────────────────────
+export const houseBankTable = pgTable("house_bank", {
+  id: integer("id").primaryKey().default(1),
+  balance: numeric("balance", { precision: 20, scale: 2 }).notNull().default("15000"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type HouseBank = typeof houseBankTable.$inferSelect;
+
 // ─── Deposit Addresses ────────────────────────────────────────────────────────
 export const depositAddressesTable = pgTable("deposit_addresses", {
   id: serial("id").primaryKey(),

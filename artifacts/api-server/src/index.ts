@@ -63,6 +63,7 @@ async function boot(): Promise<void> {
         { command: "deposit", description: "📥 Deposit chips" },
         { command: "withdraw", description: "📤 Withdraw LTC" },
         { command: "referral", description: "🎁 Invite friends — earn 5%" },
+        { command: "housebalance", description: "🏦 House bank balance" },
         ...chatGameMenuCommands().filter((c) => c.command !== "chatgames"),
         { command: "slots", description: "🎰 Play Slots" },
         { command: "blackjack", description: "🃏 Play Blackjack" },
