@@ -5,7 +5,7 @@ export type ChatBotContext = Context;
 export type ChatGameMode = "normal" | "double" | "crazy" | "crazy_double";
 export type OpponentKind = "bot" | "pvp";
 
-export const CHAT_PAYOUT_MULT = 1.9;
+export const CHAT_PAYOUT_MULT = 1.92;
 export const CHAT_MIN_BET = 1;
 export const CHAT_MAX_BET = 1_000_000;
 export const CB = "cg";

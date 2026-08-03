@@ -86,35 +86,45 @@ function usage(g: ChatGameDefinition): string {
   );
 }
 
-/** Compact setup / lobby card — edited in place so chat stays clean. */
-function setupText(g: ChatGameDefinition, m: ChatMatch, stage: string): string {
-  const mode = m.mode ? MODE_LABELS[m.mode] : "—";
-  const race = m.raceTo ? `First to ${m.raceTo}` : "—";
-  return (
-    `${g.emoji} *${g.title}*\n` +
-    `*${m.host.name}* · Bet *${money(m.bet)}* · ${CHAT_PAYOUT_MULT}x\n` +
-    `${mode} · ${race}\n\n` +
-    `${stage}`
-  );
+/** Short lobby lines — same compact size as DiceGamble mode picker. */
+function chooseModeText(g: ChatGameDefinition): string {
+  return `${g.emoji} Choose the game mode`;
 }
 
-/** Game confirmation card (shown after mode + race are chosen). */
+function chooseRaceText(g: ChatGameDefinition): string {
+  return `${g.emoji} First to how many points?`;
+}
+
+function chooseOpponentText(g: ChatGameDefinition): string {
+  return `${g.emoji} Play vs Bot or another player?`;
+}
+
+function waitingOpponentText(g: ChatGameDefinition, hostName: string): string {
+  return `${g.emoji} *${hostName}* is waiting for an opponent…`;
+}
+
+/** Game confirmation card (same compact card style as bet start). */
 function confirmBetText(g: ChatGameDefinition, m: ChatMatch): string {
   const race = m.raceTo ?? 1;
   const pointWord = race === 1 ? "point" : "points";
   const mode = m.mode ? MODE_LABELS[m.mode] : "—";
   const gameName = g.command.charAt(0).toUpperCase() + g.command.slice(1);
-  const mult = Number.isInteger(CHAT_PAYOUT_MULT)
-    ? String(CHAT_PAYOUT_MULT)
-    : CHAT_PAYOUT_MULT.toFixed(2);
   return (
     `${g.emoji} *Game confirmation*\n\n` +
     `Game: ${gameName} ${g.emoji}\n` +
     `First to ${race} ${pointWord}\n` +
     `Mode: ${mode}\n` +
     `Your bet: ${money(m.bet)}\n` +
-    `Win multiplier: ${mult}x`
+    `Win multiplier: ${CHAT_PAYOUT_MULT}x`
   );
+}
+
+function displayName(from: {
+  first_name?: string;
+  username?: string;
+}): string {
+  const first = from.first_name?.trim() || "Player";
+  return from.username ? `${first} @${from.username}` : first;
 }
 
 /**
@@ -132,9 +142,10 @@ function scoreBoardText(
   turnLine: string,
 ): string {
   return (
-    `*Score*\n` +
-    `${hostName}: ${scoreHost}\n` +
-    `${guestName}: ${scoreGuest}\n` +
+    `*Score:*\n` +
+    `${hostName} • ${scoreHost}\n` +
+    `${guestName} • ${scoreGuest}\n` +
+    `\n` +
     `*${turnLine}*`
   );
 }
@@ -167,7 +178,16 @@ function money(amount: number): string {
   return `$${amount.toFixed(2)}`;
 }
 
-/** Reference-style end screen. */
+/**
+ * Exact DiceGamble-style end screen:
+ * 🏆 Game over!
+ *
+ * Score:
+ * Name • 1
+ * Name • 2
+ *
+ * 🎉 Congratulations, Name! You won $X.XX!
+ */
 function gameOverText(
   hostName: string,
   guestName: string,
@@ -177,9 +197,11 @@ function gameOverText(
 ): string {
   return (
     `🏆 *Game over!*\n` +
+    `\n` +
     `*Score:*\n` +
     `${hostName} • ${scoreHost}\n` +
     `${guestName} • ${scoreGuest}\n` +
+    `\n` +
     resultLine
   );
 }
@@ -223,34 +245,17 @@ async function startSetup(
   }
 
   const id = chatStore.newId();
-  const sent = await ctx.reply(
-    setupText(
-      g,
-      {
-        id,
-        gameId: g.id,
-        chatId: ctx.chat!.id,
-        messageId: 0,
-        host: { userId: tgId, name: from.first_name ?? "Player" },
-        bet,
-        status: "pick_mode",
-        scoreHost: 0,
-        scoreGuest: 0,
-        round: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      },
-      "Choose a mode:",
-    ),
-    { parse_mode: "Markdown", reply_markup: modeKeyboard(id) },
-  );
+  const hostName = displayName(from);
+  const sent = await ctx.reply(chooseModeText(g), {
+    reply_markup: modeKeyboard(id),
+  });
 
   const match: ChatMatch = {
     id,
     gameId: g.id,
     chatId: ctx.chat!.id,
     messageId: sent.message_id,
-    host: { userId: tgId, name: from.first_name ?? "Player" },
+    host: { userId: tgId, name: hostName },
     bet,
     status: "pick_mode",
     scoreHost: 0,
@@ -437,10 +442,10 @@ async function runMatch(
   }
 
   const resultLine = hostWon
-    ? `🎉 Congratulations, ${winnerName}! You won ${money(payout)}!`
+    ? `🎉 *Congratulations,* *${winnerName}*! You won *${money(payout)}*!`
     : match.opponent === "bot"
-      ? `😔 Sorry, ${match.host.name}! You lost ${money(match.bet)}!`
-      : `🎉 Congratulations, ${winnerName}! You won ${money(payout)}!`;
+      ? `😔 *Sorry,* *${match.host.name}*! You lost *${money(match.bet)}*!`
+      : `🎉 *Congratulations,* *${winnerName}*! You won *${money(payout)}*!`;
 
   const finalMsg = gameOverText(
     match.host.name,
@@ -548,14 +553,14 @@ export function gameGuideText(g: ChatGameDefinition): string {
     `2. Send \`/${g.command} <bet>\` (example: \`/${g.command} 1\`)\n` +
     `3. Pick mode → race → confirm → Bot or Player\n` +
     `4. When it's your turn, send ${g.emoji} (the animated sticker)\n\n` +
-    `Payout: *1.9x* · Min bet: *$1*\n` +
+    `Payout: *${CHAT_PAYOUT_MULT}x* · Min bet: *$1*\n` +
     `Tap *Open chat* below to join ${CASINO_CHAT_GROUP}`
   );
 }
 
 /**
  * Register chat duel games: /dice 1 → mode → race → confirm → bot|player → animated play.
- * Min bet 1, payout always 1.9x.
+ * Min bet 1, payout always 1.92x.
  */
 export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
   // Capture real Telegram dice/activity emoji from players
@@ -706,6 +711,15 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
         return;
       }
 
+      if (action === "modeguide") {
+        const lines = (["normal", "double", "crazy", "crazy_double"] as ChatGameMode[])
+          .map((m) => `${MODE_LABELS[m]}: ${g.modeHint?.(m) ?? "Higher wins."}`)
+          .join("\n");
+        await ctx.answerCbQuery(`${g.emoji} ${g.title}`, { show_alert: false });
+        await say(bot, match.chatId, `ℹ️ *Mode Guide — ${g.title}*\n\n${lines}`, match.messageId);
+        return;
+      }
+
       if (action === "mode") {
         if (uid !== match.host.userId) {
           await ctx.answerCbQuery("Only host can choose", { show_alert: true });
@@ -716,12 +730,11 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
         match.status = "pick_race";
         chatStore.save(match);
         await ctx.answerCbQuery(MODE_LABELS[mode]);
-        const hint = g.modeHint?.(mode);
         await editMsg(
           ctx.telegram,
           match.chatId,
           match.messageId,
-          setupText(g, match, hint ? `${hint}\n\nFirst to how many?` : "First to how many?"),
+          chooseRaceText(g),
           raceKeyboard(matchId),
         );
         return;
@@ -737,7 +750,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           ctx.telegram,
           match.chatId,
           match.messageId,
-          setupText(g, match, "Choose a mode:"),
+          chooseModeText(g),
           modeKeyboard(matchId),
         );
         return;
@@ -771,7 +784,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           ctx.telegram,
           match.chatId,
           match.messageId,
-          setupText(g, match, "How many points to win?"),
+          chooseRaceText(g),
           raceKeyboard(matchId),
         );
         return;
@@ -786,7 +799,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           ctx.telegram,
           match.chatId,
           match.messageId,
-          setupText(g, match, "Play vs Bot or another player?"),
+          chooseOpponentText(g),
           opponentKeyboard(matchId),
         );
         return;
@@ -813,11 +826,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
             ctx.telegram,
             match.chatId,
             match.messageId,
-            setupText(
-              g,
-              match,
-              `Waiting for an opponent…\nAnyone can tap *Join Match*.`,
-            ),
+            waitingOpponentText(g, match.host.name),
             waitingKeyboard(matchId),
           );
           return;
@@ -839,7 +848,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           await ctx.answerCbQuery(`Need ${match.bet} USD`, { show_alert: true });
           return;
         }
-        match.guest = { userId: uid, name: ctx.from!.first_name ?? "Player" };
+        match.guest = { userId: uid, name: displayName(ctx.from!) };
         match.opponent = "pvp";
         chatStore.save(match);
         await ctx.answerCbQuery("Joined!");
@@ -847,11 +856,7 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
           ctx.telegram,
           match.chatId,
           match.messageId,
-          setupText(
-            g,
-            match,
-            `*${match.guest.name}* joined — starting…`,
-          ),
+          `${g.emoji} *${match.guest.name}* joined — starting…`,
         );
         void runMatch(bot, match, g);
         return;

@@ -7,12 +7,15 @@ export function modeKeyboard(matchId: string): InlineKeyboardMarkup {
     normal: "Normal Mode",
     double: "Double Roll",
     crazy: "Crazy Mode",
-    crazy_double: "Crazy Double",
+    crazy_double: "Crazy Double Roll",
   };
   return {
     inline_keyboard: [
       ...modes.map((m) => [{ text: labels[m], callback_data: `${CB}|mode|${matchId}|${m}` }]),
-      [{ text: "Cancel", callback_data: `${CB}|cancel|${matchId}` }],
+      [
+        { text: "ℹ️ Mode Guide", callback_data: `${CB}|modeguide|${matchId}` },
+        { text: "❌ Cancel", callback_data: `${CB}|cancel|${matchId}` },
+      ],
     ],
   };
 }
@@ -23,8 +26,10 @@ export function raceKeyboard(matchId: string): InlineKeyboardMarkup {
       [{ text: "First 1 point", callback_data: `${CB}|race|${matchId}|1` }],
       [{ text: "First 2 points", callback_data: `${CB}|race|${matchId}|2` }],
       [{ text: "First 3 points", callback_data: `${CB}|race|${matchId}|3` }],
-      [{ text: "Back", callback_data: `${CB}|backmode|${matchId}` }],
-      [{ text: "Cancel", callback_data: `${CB}|cancel|${matchId}` }],
+      [
+        { text: "Back", callback_data: `${CB}|backmode|${matchId}` },
+        { text: "❌ Cancel", callback_data: `${CB}|cancel|${matchId}` },
+      ],
     ],
   };
 }
@@ -34,7 +39,7 @@ export function confirmKeyboard(matchId: string): InlineKeyboardMarkup {
     inline_keyboard: [
       [
         { text: "Confirm", callback_data: `${CB}|confirm|${matchId}` },
-        { text: "Cancel", callback_data: `${CB}|cancel|${matchId}` },
+        { text: "❌ Cancel", callback_data: `${CB}|cancel|${matchId}` },
       ],
     ],
   };
@@ -45,7 +50,7 @@ export function opponentKeyboard(matchId: string): InlineKeyboardMarkup {
     inline_keyboard: [
       [{ text: "Play vs Bot", callback_data: `${CB}|vs|${matchId}|bot` }],
       [{ text: "Play vs Player", callback_data: `${CB}|vs|${matchId}|pvp` }],
-      [{ text: "Cancel", callback_data: `${CB}|cancel|${matchId}` }],
+      [{ text: "❌ Cancel", callback_data: `${CB}|cancel|${matchId}` }],
     ],
   };
 }
@@ -54,7 +59,7 @@ export function waitingKeyboard(matchId: string): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [{ text: "Join Match", callback_data: `${CB}|join|${matchId}` }],
-      [{ text: "Cancel", callback_data: `${CB}|cancel|${matchId}` }],
+      [{ text: "❌ Cancel", callback_data: `${CB}|cancel|${matchId}` }],
     ],
   };
 }

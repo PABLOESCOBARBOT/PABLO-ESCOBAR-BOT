@@ -231,12 +231,18 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   bot.command("balance", async (ctx) => {
     const tgId = String(ctx.from!.id);
     await getOrCreateUser(tgId, ctx.from!.username, ctx.from!.first_name, ctx.from!.last_name);
-    // Balance in group — show inline (no private redirect)
     const chips = await getChips(tgId);
-    await ctx.reply(
-      `💰 *${ctx.from!.first_name}'s Balance*\n\n${chips.toFixed(0)} USD ($${chips.toFixed(0)})`,
-      { parse_mode: "Markdown" },
-    );
+    await ctx.reply(`Your balance: *$${chips.toFixed(2)}*`, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "💳 Deposit", callback_data: "menu_deposit" },
+            { text: "💸 Withdraw", callback_data: "menu_withdraw" },
+          ],
+        ],
+      },
+    });
   });
 
   // ─── /help ──────────────────────────────────────────────────────────────
@@ -430,10 +436,18 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     if (data === "balance") {
       const chips = await getChips(tgId);
-      return ctx.editMessageText(
-        `💰 *Your Balance*\n\n*${chips.toFixed(0)} USD*`,
-        { parse_mode: "Markdown", reply_markup: mainMenu() },
-      );
+      return ctx.editMessageText(`Your balance: *$${chips.toFixed(2)}*`, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "💳 Deposit", callback_data: "menu_deposit" },
+              { text: "💸 Withdraw", callback_data: "menu_withdraw" },
+            ],
+            [{ text: "🏠 Menu", callback_data: "main_menu" }],
+          ],
+        },
+      });
     }
 
     if (data === "help") {
@@ -1886,7 +1900,7 @@ function helpText(): string {
     `🎯 /dart · 🎳 /bowling · 🎰 /spin\n` +
     `⚽ /goal · 🏀 /hoop · 🎯 /bullseye · 🎳 /strike\n` +
     `Flow: Mode → First to 1/2/3 → Confirm → Bot/Player\n` +
-    `Min bet *1* · Win pays *1.9x* always\n\n` +
+    `Min bet *1* · Win pays *1.92x* always\n\n` +
     `*Classic house games:*\n` +
     `/slots /blackjack /roulette /crash /plinko\n` +
     `/games — open games menu\n\n` +
