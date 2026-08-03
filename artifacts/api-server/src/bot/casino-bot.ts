@@ -205,15 +205,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const tgId = String(from.id);
     await getOrCreateUser(tgId, from.username, from.first_name, from.last_name);
 
-    if (isGroup(ctx)) {
-      const chips = await getChips(tgId);
-      return ctx.reply(
-        `Enjoy the games!\n\n🏠 *Menu*\nBalance: *$${chips.toFixed(2)}*\n\nPlay right here in the group:`,
-        { parse_mode: "Markdown", reply_markup: groupGamesMenu(botUsername) },
-      );
-    }
-
-    // Clear any leftover custom reply-keyboard (the 🎛 icon next to the mic)
+    // Clear leftover custom reply-keyboard in private chats
     if (!isGroup(ctx)) {
       try {
         await ctx.reply("\u200B", {
@@ -222,11 +214,12 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       } catch { /* ignore */ }
     }
 
-    if (ctx.startPayload) {
+    // Deep-link payloads only in private
+    if (!isGroup(ctx) && ctx.startPayload) {
       return handleStartPayload(ctx, tgId, ctx.startPayload);
     }
 
-    // Full DiceGamble-style greeting on /start
+    // Same greeting in private AND group chats
     await ctx.reply(startWelcomeText(CASINO_CHAT_GROUP), {
       parse_mode: "Markdown",
       reply_markup: startWelcomeKeyboard(CASINO_CHAT_GROUP),
