@@ -74,10 +74,10 @@ export async function handlePaidPayment(payment: NowPaymentsPayment): Promise<vo
   if (user) {
     await notifyCasinoUser(
       user.telegramId,
-      `✅ *Payment Received!*\n\n` +
-        `💰 Confirmed on blockchain via NOWPayments\n` +
+      `✅ *Deposit Confirmed!*\n\n` +
+        `💰 Payment detected on the blockchain\n` +
         `💵 *$${usd.toFixed(2)} USD* added to your balance!\n\n` +
-        `Transaction: #${tx.id}\n\n` +
+        `Deposit: #${tx.id}\n\n` +
         `Happy playing! 🎲`,
     );
   }
@@ -120,7 +120,7 @@ export async function handlePayoutUpdate(payload: Record<string, unknown>): Prom
         `✅ *Withdrawal Paid!*\n\n` +
           `Amount: *$${parseFloat(tx.amount).toFixed(2)} USD*\n` +
           `#${tx.id}\n\n` +
-          `Sent via NOWPayments on-chain.`,
+          `Sent on-chain to your LTC address.`,
       );
     }
     return;

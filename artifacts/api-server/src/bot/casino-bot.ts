@@ -438,17 +438,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     if (data.startsWith("deposit_np_") || data.startsWith("deposit_cp_")) {
       const crypto = data.replace(/^deposit_(np|cp)_/, "");
-      delete ctx.session.awaitingNpDepositAmount;
-      delete ctx.session.awaitingNpDepositCrypto;
-      const label =
-        DEFAULT_DEPOSIT_COINS.find((c) => c.crypto === crypto)?.label ?? crypto.toUpperCase();
-      return ctx.editMessageText(
-        `💵 *Deposit — ${label}*\n\n` +
-          `Pick an amount, or tap *Custom amount* and type any USD value.\n` +
-          `Min: *$${DEPOSIT_MIN_USD} USD*\n` +
-          `Credits as USD after blockchain confirm.`,
-        { parse_mode: "Markdown", reply_markup: depositAmountMenu(crypto) },
-      );
+      return showDepositAmountPicker(ctx, crypto);
     }
     if (data.startsWith("deposit_custom_")) {
       const crypto = data.replace("deposit_custom_", "");
@@ -464,7 +454,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         {
           parse_mode: "HTML",
           reply_markup: {
-            inline_keyboard: [[{ text: "🔙 Back", callback_data: `deposit_np_${crypto}` }]],
+            inline_keyboard: [[{ text: "🔙 Back", callback_data: `deposit_crypto_${crypto}` }]],
           },
         },
       );
@@ -801,15 +791,40 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     });
   }
 
+  function depositCryptoLabel(crypto: string, adminLabel?: string | null): string {
+    return (
+      adminLabel ||
+      DEFAULT_DEPOSIT_COINS.find((c) => c.crypto === crypto)?.label ||
+      crypto.toUpperCase()
+    );
+  }
+
+  async function showDepositAmountPicker(ctx: BotContext, crypto: string) {
+    const addresses = await getDepositAddresses();
+    const addr = addresses.find((a) => a.crypto === crypto);
+    const label = depositCryptoLabel(crypto, addr?.label);
+    delete ctx.session.awaitingNpDepositAmount;
+    delete ctx.session.awaitingNpDepositCrypto;
+    return ctx.editMessageText(
+      `💵 *Deposit — ${label}*\n\n` +
+        `Pick an amount, or tap *Custom amount*.\n` +
+        `Min: *$${DEPOSIT_MIN_USD} USD*\n\n` +
+        `Next step: send crypto to the address we show you.`,
+      { parse_mode: "Markdown", reply_markup: depositAmountMenu(crypto) },
+    );
+  }
+
   async function showDepositOptions(ctx: BotContext, asReply = false) {
     const addresses = await getDepositAddresses();
     const npOn = isNowPaymentsEnabled();
-    const options =
-      addresses.length > 0
-        ? addresses.map(a => ({ crypto: a.crypto, label: a.label }))
-        : npOn
-          ? DEFAULT_DEPOSIT_COINS
-          : [];
+
+    // Auto deposits: always show full coin list. Manual-only: admin addresses.
+    const options = npOn
+      ? DEFAULT_DEPOSIT_COINS.map((c) => {
+          const admin = addresses.find((a) => a.crypto === c.crypto);
+          return { crypto: c.crypto, label: admin?.label ?? c.label };
+        })
+      : addresses.map((a) => ({ crypto: a.crypto, label: a.label }));
 
     if (options.length === 0) {
       const text = "⚠️ No deposit methods configured yet. Please contact the admin.";
@@ -820,10 +835,12 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     const text =
       "📥 *Deposit*\n\n" +
-      "Select a cryptocurrency:\n" +
-      `💵 Min deposit: *$${DEPOSIT_MIN_USD} USD* — any amount you want\n` +
-      (npOn ? "⚡ Auto credit via NOWPayments\n" : "") +
-      "📤 Withdrawals: *LTC only*\n";
+      "1) Pick a crypto\n" +
+      "2) Enter amount\n" +
+      "3) Send to the address shown\n" +
+      "4) USD credits automatically after confirm\n\n" +
+      `💵 Min: *$${DEPOSIT_MIN_USD} USD*\n` +
+      "📤 Withdrawals: *LTC only*";
 
     const markup = depositMenu(options, { showManualConfirm: addresses.length > 0 && !npOn });
     return asReply
@@ -838,39 +855,26 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   async function handleDepositCryptoSelected(ctx: BotContext, tgId: string, crypto: string) {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
-    const label = addr?.label ?? DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
+    const label = depositCryptoLabel(crypto, addr?.label);
 
     ctx.session.awaitingDepositCrypto = crypto;
 
     const npCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
     const npAvailable = isNowPaymentsEnabled() && !!npCurrency;
 
+    // Clean flow: crypto → amount → address (no gateway name / no method picker)
     if (npAvailable) {
-      const rows: Array<Array<{ text: string; callback_data: string }>> = [
-        [{ text: "⚡ Auto Deposit (NOWPayments)", callback_data: `deposit_np_${crypto}` }],
-      ];
-      if (addr?.address) {
-        rows.push([{ text: "🏦 Manual (Static Address)", callback_data: `deposit_manual_${crypto}` }]);
-      }
-      rows.push([{ text: "🔙 Back", callback_data: "menu_deposit" }]);
-
-      return ctx.editMessageText(
-        `📥 *Deposit — ${label}*\n\n` +
-          `💵 Min: *$${DEPOSIT_MIN_USD}* · type any amount you want\n` +
-          `Balance credited in USD\n\nChoose method:`,
-        { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } },
-      );
+      return showDepositAmountPicker(ctx, crypto);
     }
 
     if (!addr?.address) {
-      return ctx.answerCbQuery("❌ Address not configured. Enable NOWPayments or set address in Admin.", { show_alert: true });
+      return ctx.answerCbQuery("❌ This crypto is not available for deposit right now.", { show_alert: true });
     }
 
-    // Show static address clearly (HTML avoids Markdown underscore issues)
     return ctx.editMessageText(
-      `📥 <b>Manual Deposit — ${label}</b>\n\n` +
+      `📥 <b>Deposit — ${label}</b>\n\n` +
         `Network: ${addr.network ?? label}\n` +
-        `Min: <b>$${DEPOSIT_MIN_USD}</b> — any amount you want\n\n` +
+        `Min: <b>$${DEPOSIT_MIN_USD}</b>\n\n` +
         `📬 Send to this address:\n<code>${addr.address}</code>\n\n` +
         `After sending, tap Confirm and paste your TX hash.`,
       {
@@ -916,17 +920,16 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   ): Promise<void> {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
-    const label = addr?.label ?? DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
+    const label = depositCryptoLabel(crypto, addr?.label);
 
     const payCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
     if (!payCurrency) {
       try {
-        await ctx.answerCbQuery("❌ This crypto is not supported by NOWPayments", { show_alert: true });
-      } catch { /* may be text reply path */ }
+        await ctx.answerCbQuery("❌ This crypto is not available.", { show_alert: true });
+      } catch { /* text path */ }
       return;
     }
 
-    // Allow any positive USD amount the user wants (floor to 2 decimals)
     const priceUsd = Math.round(Math.max(DEPOSIT_MIN_USD, amountUsd) * 100) / 100;
     const orderId = `dep-${tgId}-${Date.now()}`;
 
@@ -939,12 +942,37 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         try {
           await ctx.editMessageText(html, opts);
           return;
-        } catch { /* fall through to reply */ }
+        } catch { /* fall through */ }
       }
       await ctx.reply(html, opts);
     };
 
-    await sendHtml(`⏳ Creating deposit for <b>$${priceUsd.toFixed(2)}</b> (${label})…`);
+    const showAddressCard = async (opts: {
+      payAmount: string | number;
+      payAddress: string;
+      network?: string;
+      paymentId: string;
+      txId: number;
+    }) => {
+      await sendHtml(
+        `📥 <b>Deposit — ${label}</b>\n\n` +
+          `💵 You pay for: <b>$${priceUsd.toFixed(2)} USD</b>\n` +
+          `🪙 Send exactly: <b>${opts.payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
+          `📬 Address:\n<code>${opts.payAddress}</code>\n\n` +
+          `Network: ${opts.network ?? addr?.network ?? label}\n` +
+          `Deposit ID: #${opts.txId}\n\n` +
+          `✅ After payment confirms, USD is added automatically.\n` +
+          `🔔 You'll get a Telegram notification.`,
+        {
+          inline_keyboard: [
+            [{ text: "🔄 Check Status", callback_data: `deposit_check_${opts.txId}` }],
+            [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+          ],
+        },
+      );
+    };
+
+    await sendHtml(`⏳ Preparing <b>${label}</b> deposit for <b>$${priceUsd.toFixed(2)}</b>…`);
 
     try {
       const checkout = await createDepositCheckout(
@@ -954,12 +982,12 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         `Casino deposit — ${label} — user ${tgId}`,
       );
 
-      if (checkout.mode === "payment") {
+      // Prefer any path that gives a real on-chain address (never send users to external pages)
+      if (checkout.mode === "payment" && checkout.payment.pay_address) {
         const payment = checkout.payment;
         const paymentId = String(payment.payment_id);
         const payAmount = payment.pay_amount ?? priceUsd;
-        const payAddress = payment.pay_address ?? "";
-
+        const payAddress = payment.pay_address;
         const tx = await createAutoDeposit(
           tgId,
           crypto,
@@ -968,32 +996,17 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
           payAddress,
           orderId,
         );
-
-        await sendHtml(
-          `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-            `💵 Amount: <b>$${priceUsd.toFixed(2)}</b> → <b>${priceUsd.toFixed(2)} USD</b>\n` +
-            `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
-            `📬 Address:\n<code>${payAddress}</code>\n\n` +
-            `Network: ${payment.network ?? addr?.network ?? payCurrency}\n` +
-            `Payment ID: <code>${paymentId}</code>\n` +
-            `Deposit ID: #${tx.id}\n\n` +
-            `✅ USD credit automatically after confirmation.`,
-          {
-            inline_keyboard: [
-              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-              [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
-            ],
-          },
-        );
+        await showAddressCard({
+          payAmount,
+          payAddress,
+          network: payment.network ?? undefined,
+          paymentId,
+          txId: tx.id,
+        });
         return;
       }
 
-      // Invoice mode — prefer invoice-payment (pollable payment_id + address)
-      const invoice = checkout.invoice;
-      const invoiceId = String(invoice.id);
-      const payUrl = invoice.invoice_url;
-      const linked = checkout.payment;
-
+      const linked = checkout.mode === "invoice" ? checkout.payment : undefined;
       if (linked?.payment_id && linked.pay_address) {
         const paymentId = String(linked.payment_id);
         const payAmount = linked.pay_amount ?? priceUsd;
@@ -1006,60 +1019,35 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
           payAddress,
           orderId,
         );
-
-        await sendHtml(
-          `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-            `💵 Amount: <b>$${priceUsd.toFixed(2)}</b> → <b>${priceUsd.toFixed(2)} USD</b>\n` +
-            `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
-            `📬 Address:\n<code>${payAddress}</code>\n\n` +
-            `Payment ID: <code>${paymentId}</code>\n` +
-            `Invoice: <code>${invoiceId}</code>\n` +
-            `Deposit ID: #${tx.id}\n\n` +
-            `✅ After blockchain confirm, USD credits automatically.`,
-          {
-            inline_keyboard: [
-              ...(payUrl ? [[{ text: `💳 Open Checkout`, url: payUrl }]] : []),
-              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-              [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
-            ],
-          },
-        );
+        await showAddressCard({
+          payAmount,
+          payAddress,
+          network: linked.network ?? undefined,
+          paymentId,
+          txId: tx.id,
+        });
         return;
       }
 
-      const tx = await createAutoDeposit(
-        tgId,
-        crypto,
-        String(priceUsd),
-        `inv-${invoiceId}`,
-        payUrl,
-        orderId,
-      );
-
+      // No address available — do not show external invoice links
       await sendHtml(
-        `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-          `💵 Amount: <b>$${priceUsd.toFixed(2)}</b> → <b>${priceUsd.toFixed(2)} USD</b>\n\n` +
-          `👇 Tap <b>Pay Now</b> — the deposit <b>address</b> will open on NOWPayments.\n` +
-          `Send the exact amount shown there.\n\n` +
-          `Invoice: <code>${invoiceId}</code>\n` +
-          `Deposit ID: #${tx.id}\n\n` +
-          `✅ After payment, USD credit automatically.`,
+        `❌ Could not create a deposit address for this amount.\n\n` +
+          `Try a different amount or another crypto.`,
         {
           inline_keyboard: [
-            [{ text: `💳 Pay $${priceUsd.toFixed(2)} — Show Address`, url: payUrl }],
-            [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-            [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
+            [{ text: "🔄 Try Again", callback_data: `deposit_crypto_${crypto}` }],
+            [{ text: "🔙 Back", callback_data: "menu_deposit" }],
           ],
         },
       );
     } catch (e) {
+      logger.warn({ e, crypto, priceUsd }, "Deposit address create failed");
       await sendHtml(
-        `❌ NOWPayments failed.\n\n${String(e)}\n\nTry again or contact admin.`,
+        `❌ Deposit failed. Please try again.\n\n` +
+          `If it keeps failing, contact admin.`,
         {
           inline_keyboard: [
-            ...(addr?.address
-              ? [[{ text: "🏦 Use Manual Deposit", callback_data: `deposit_manual_${crypto}` }]]
-              : []),
+            [{ text: "🔄 Try Again", callback_data: `deposit_crypto_${crypto}` }],
             [{ text: "🔙 Back", callback_data: "menu_deposit" }],
           ],
         },
@@ -1072,39 +1060,23 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     if (!tx || tx.status !== "pending") {
       const chips = await getChips(tgId);
       await ctx.answerCbQuery(
-        tx?.status === "approved" ? `✅ Already credited! Balance: ${chips.toFixed(0)}` : "Deposit not pending",
+        tx?.status === "approved" ? `✅ Already credited! Balance: ${chips.toFixed(0)} USD` : "Deposit not pending",
         { show_alert: true },
       );
       return;
     }
 
-    if (!tx.txHash) {
-      await ctx.answerCbQuery("No payment id on this deposit", { show_alert: true });
-      return;
-    }
-
-    // Invoice-only checkout — still waiting for payment_id bind via IPN/JWT list
-    if (tx.txHash.startsWith("inv-")) {
-      const payUrl = tx.walletAddress;
+    if (!tx.txHash || tx.txHash.startsWith("inv-")) {
       await ctx.answerCbQuery(
-        "Waiting for blockchain payment. Keep this open — USD auto-credits after confirm.",
+        "Still waiting for payment. Send the exact amount to the address shown.",
         { show_alert: true },
       );
-      if (payUrl?.startsWith("http")) {
-        await ctx.editMessageReplyMarkup({
-          inline_keyboard: [
-            [{ text: "💳 Open Payment / Address", url: payUrl }],
-            [{ text: "🔄 Check Again", callback_data: `deposit_check_${tx.id}` }],
-            [{ text: "🔙 Menu", callback_data: "main_menu" }],
-          ],
-        }).catch(() => {});
-      }
       return;
     }
 
     const payment = await getPayment(tx.txHash);
     if (!payment) {
-      await ctx.answerCbQuery("Could not fetch payment status. Try again shortly.", { show_alert: true });
+      await ctx.answerCbQuery("Could not check status yet. Try again shortly.", { show_alert: true });
       return;
     }
 
@@ -1114,17 +1086,21 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       try {
         await approveTransaction(tx.id, chips);
         await ctx.editMessageText(
-          `✅ <b>Payment Confirmed!</b>\n\n🎰 <b>${chips} USD</b> added.\nDeposit #${tx.id}`,
+          `✅ <b>Deposit Confirmed!</b>\n\n` +
+            `💵 <b>$${chips} USD</b> added to your balance.\n` +
+            `Deposit #${tx.id}`,
           { parse_mode: "HTML", reply_markup: mainMenu() },
         );
       } catch (e) {
-        await ctx.answerCbQuery(`Status: ${payment.payment_status}. ${String(e)}`, { show_alert: true });
+        await ctx.answerCbQuery(`Still processing. ${String(e)}`, { show_alert: true });
       }
       return;
     }
 
+    const paid = payment.actually_paid ?? 0;
+    const need = payment.pay_amount ?? "?";
     await ctx.answerCbQuery(
-      `Status: ${payment.payment_status}. Paid: ${payment.actually_paid ?? 0}/${payment.pay_amount ?? "?"}`,
+      `Waiting for payment… Received ${paid} / ${need}`,
       { show_alert: true },
     );
   }
