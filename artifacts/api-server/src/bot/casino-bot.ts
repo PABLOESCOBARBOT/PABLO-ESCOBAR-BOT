@@ -112,8 +112,8 @@ interface SessionData {
   pvpBet?: number;
 }
 
-/** Minimum deposit in USD. Below gateway address-min we fall back to checkout link. */
-const DEPOSIT_MIN_USD = 5;
+/** Minimum deposit in USD (matches NOWPayments address generation floor). */
+const DEPOSIT_MIN_USD = 12;
 
 type BotContext = Context & { session: SessionData };
 
