@@ -228,7 +228,7 @@ export function depositMenu(
   return { inline_keyboard: rows };
 }
 
-/** Amount picker for NOWPayments (min $5) */
+/** Amount picker for NOWPayments — presets + custom any amount */
 export function depositAmountMenu(crypto: string): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
@@ -240,8 +240,14 @@ export function depositAmountMenu(crypto: string): InlineKeyboardMarkup {
       [
         { text: "$50", callback_data: `deposit_amt_${crypto}_50` },
         { text: "$100", callback_data: `deposit_amt_${crypto}_100` },
+        { text: "$250", callback_data: `deposit_amt_${crypto}_250` },
       ],
-      [{ text: "🔙 Back", callback_data: "menu_deposit" }],
+      [
+        { text: "$500", callback_data: `deposit_amt_${crypto}_500` },
+        { text: "$1000", callback_data: `deposit_amt_${crypto}_1000` },
+      ],
+      [{ text: "✏️ Custom amount", callback_data: `deposit_custom_${crypto}` }],
+      [{ text: "🔙 Back", callback_data: `deposit_crypto_${crypto}` }],
     ],
   };
 }

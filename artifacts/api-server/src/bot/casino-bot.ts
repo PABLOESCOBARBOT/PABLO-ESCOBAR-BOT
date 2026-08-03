@@ -93,6 +93,9 @@ interface SessionData {
   awaitingDepositHash?: boolean;
   awaitingDepositAmount?: boolean;
   depositCryptoAmount?: string;
+  /** NOWPayments: waiting for user to type custom USD amount */
+  awaitingNpDepositAmount?: boolean;
+  awaitingNpDepositCrypto?: string;
   awaitingWithdrawCrypto?: string;
   awaitingWithdrawAddress?: boolean;
   awaitingWithdrawAmount?: boolean;
@@ -106,6 +109,9 @@ interface SessionData {
   awaitingPvpBet?: boolean;
   pvpBet?: number;
 }
+
+/** Soft min for deposits — NOWPayments may require higher per-coin; invoice fallback covers low amounts. */
+const DEPOSIT_MIN_USD = 1;
 
 type BotContext = Context & { session: SessionData };
 
@@ -422,6 +428,8 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       if (isGroup(ctx)) {
         return ctx.answerCbQuery("Please open the bot in private to deposit", { show_alert: true });
       }
+      delete ctx.session.awaitingNpDepositAmount;
+      delete ctx.session.awaitingNpDepositCrypto;
       return handleDepositMenu(ctx);
     }
     if (data.startsWith("deposit_crypto_")) {
@@ -430,10 +438,35 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     if (data.startsWith("deposit_np_") || data.startsWith("deposit_cp_")) {
       const crypto = data.replace(/^deposit_(np|cp)_/, "");
-      // Ask for amount (min $5)
+      delete ctx.session.awaitingNpDepositAmount;
+      delete ctx.session.awaitingNpDepositCrypto;
+      const label =
+        DEFAULT_DEPOSIT_COINS.find((c) => c.crypto === crypto)?.label ?? crypto.toUpperCase();
       return ctx.editMessageText(
-        `💵 *Select deposit amount*\n\nMin: *$5 USD*\nBalance shown in USD`,
+        `💵 *Deposit — ${label}*\n\n` +
+          `Pick an amount, or tap *Custom amount* and type any USD value.\n` +
+          `Min: *$${DEPOSIT_MIN_USD} USD*\n` +
+          `Credits as USD after blockchain confirm.`,
         { parse_mode: "Markdown", reply_markup: depositAmountMenu(crypto) },
+      );
+    }
+    if (data.startsWith("deposit_custom_")) {
+      const crypto = data.replace("deposit_custom_", "");
+      ctx.session.awaitingNpDepositCrypto = crypto;
+      ctx.session.awaitingNpDepositAmount = true;
+      const label =
+        DEFAULT_DEPOSIT_COINS.find((c) => c.crypto === crypto)?.label ?? crypto.toUpperCase();
+      return ctx.editMessageText(
+        `✏️ <b>Custom Deposit — ${label}</b>\n\n` +
+          `Type any USD amount you want to deposit.\n` +
+          `Min: <b>$${DEPOSIT_MIN_USD}</b>\n\n` +
+          `Example: <code>15</code> or <code>37.5</code>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 Back", callback_data: `deposit_np_${crypto}` }]],
+          },
+        },
       );
     }
     if (data.startsWith("deposit_amt_")) {
@@ -441,7 +474,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const rest = data.replace("deposit_amt_", "");
       const amountStr = rest.split("_").pop()!;
       const crypto = rest.slice(0, rest.length - amountStr.length - 1);
-      const amount = parseInt(amountStr, 10);
+      const amount = parseFloat(amountStr);
+      delete ctx.session.awaitingNpDepositAmount;
+      delete ctx.session.awaitingNpDepositCrypto;
       return handleNowPaymentsDeposit(ctx, tgId, crypto, amount);
     }
     if (data.startsWith("deposit_check_")) {
@@ -628,6 +663,29 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const text = ctx.message.text.trim();
     const sess = ctx.session;
 
+    // NOWPayments custom USD amount (any value the user wants)
+    if (sess.awaitingNpDepositAmount && sess.awaitingNpDepositCrypto) {
+      const cleaned = text.replace(/[$,\s]/g, "");
+      const amount = parseFloat(cleaned);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        await ctx.reply("❌ Enter a valid USD amount, e.g. `25` or `12.5`", { parse_mode: "Markdown" });
+        return;
+      }
+      if (amount < DEPOSIT_MIN_USD) {
+        await ctx.reply(`❌ Minimum deposit is *$${DEPOSIT_MIN_USD} USD*.`, { parse_mode: "Markdown" });
+        return;
+      }
+      if (amount > 1_000_000) {
+        await ctx.reply("❌ Amount too large. Enter a smaller USD amount.");
+        return;
+      }
+      const crypto = sess.awaitingNpDepositCrypto;
+      sess.awaitingNpDepositAmount = false;
+      delete sess.awaitingNpDepositCrypto;
+      await handleNowPaymentsDeposit(ctx, tgId, crypto, amount);
+      return;
+    }
+
     if (sess.awaitingDepositHash) {
       sess.awaitingDepositHash = false;
       sess.awaitingDepositAmount = true;
@@ -648,8 +706,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       const cryptoAddr = addresses.find(a => a.crypto === sess.awaitingDepositCrypto);
       const chipsPerUnit = cryptoAddr ? parseFloat(cryptoAddr.chipsPerUnit) : 1;
       const estimatedChips = amount * chipsPerUnit;
-      if (estimatedChips < 5) {
-        await ctx.reply(`❌ Minimum deposit is *$5 USD*.\n\nYour amount would give ${estimatedChips.toFixed(2)} USD.`, { parse_mode: "Markdown" });
+      if (estimatedChips < DEPOSIT_MIN_USD) {
+        await ctx.reply(
+          `❌ Minimum deposit is *$${DEPOSIT_MIN_USD} USD*.\n\nYour amount would give ${estimatedChips.toFixed(2)} USD.`,
+          { parse_mode: "Markdown" },
+        );
         return;
       }
       sess.awaitingDepositAmount = false;
@@ -760,8 +821,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const text =
       "📥 *Deposit*\n\n" +
       "Select a cryptocurrency:\n" +
-      "💵 Min deposit: *$5 USD*\n" +
-      (npOn ? "⚡ Auto credit via NOWPayments\n" : "");
+      `💵 Min deposit: *$${DEPOSIT_MIN_USD} USD* — any amount you want\n` +
+      (npOn ? "⚡ Auto credit via NOWPayments\n" : "") +
+      "📤 Withdrawals: *LTC only*\n";
 
     const markup = depositMenu(options, { showManualConfirm: addresses.length > 0 && !npOn });
     return asReply
@@ -793,7 +855,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       rows.push([{ text: "🔙 Back", callback_data: "menu_deposit" }]);
 
       return ctx.editMessageText(
-        `📥 *Deposit — ${label}*\n\n💵 Min: *$5* | Balance shown in USD\n\nChoose method:`,
+        `📥 *Deposit — ${label}*\n\n` +
+          `💵 Min: *$${DEPOSIT_MIN_USD}* · type any amount you want\n` +
+          `Balance credited in USD\n\nChoose method:`,
         { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } },
       );
     }
@@ -806,7 +870,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     return ctx.editMessageText(
       `📥 <b>Manual Deposit — ${label}</b>\n\n` +
         `Network: ${addr.network ?? label}\n` +
-        `Min: <b>$5</b> (5 USD)\n\n` +
+        `Min: <b>$${DEPOSIT_MIN_USD}</b> — any amount you want\n\n` +
         `📬 Send to this address:\n<code>${addr.address}</code>\n\n` +
         `After sending, tap Confirm and paste your TX hash.`,
       {
@@ -829,7 +893,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     return ctx.editMessageText(
       `📥 <b>Manual Deposit — ${addr.label}</b>\n\n` +
         `Network: ${addr.network ?? addr.label}\n` +
-        `Min: <b>$5</b>\n\n` +
+        `Min: <b>$${DEPOSIT_MIN_USD}</b> — any amount you want\n\n` +
         `📬 Address:\n<code>${addr.address}</code>\n\n` +
         `Send funds, then tap Confirm and paste TX hash.`,
       {
@@ -848,7 +912,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     ctx: BotContext,
     tgId: string,
     crypto: string,
-    amountUsd = 5,
+    amountUsd = DEPOSIT_MIN_USD,
   ): Promise<void> {
     const addresses = await getDepositAddresses();
     const addr = addresses.find(a => a.crypto === crypto);
@@ -856,12 +920,31 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     const payCurrency = NOWPAYMENTS_CURRENCY_MAP[crypto];
     if (!payCurrency) {
-      await ctx.answerCbQuery("❌ This crypto is not supported by NOWPayments", { show_alert: true });
+      try {
+        await ctx.answerCbQuery("❌ This crypto is not supported by NOWPayments", { show_alert: true });
+      } catch { /* may be text reply path */ }
       return;
     }
 
-    const priceUsd = Math.max(5, Math.floor(amountUsd));
+    // Allow any positive USD amount the user wants (floor to 2 decimals)
+    const priceUsd = Math.round(Math.max(DEPOSIT_MIN_USD, amountUsd) * 100) / 100;
     const orderId = `dep-${tgId}-${Date.now()}`;
+
+    const sendHtml = async (
+      html: string,
+      markup?: { inline_keyboard: Array<Array<{ text: string; callback_data?: string; url?: string }>> },
+    ) => {
+      const opts = { parse_mode: "HTML" as const, ...(markup ? { reply_markup: markup } : {}) };
+      if (ctx.callbackQuery) {
+        try {
+          await ctx.editMessageText(html, opts);
+          return;
+        } catch { /* fall through to reply */ }
+      }
+      await ctx.reply(html, opts);
+    };
+
+    await sendHtml(`⏳ Creating deposit for <b>$${priceUsd.toFixed(2)}</b> (${label})…`);
 
     try {
       const checkout = await createDepositCheckout(
@@ -886,9 +969,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
           orderId,
         );
 
-        await ctx.editMessageText(
+        await sendHtml(
           `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-            `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} USD</b>\n` +
+            `💵 Amount: <b>$${priceUsd.toFixed(2)}</b> → <b>${priceUsd.toFixed(2)} USD</b>\n` +
             `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
             `📬 Address:\n<code>${payAddress}</code>\n\n` +
             `Network: ${payment.network ?? addr?.network ?? payCurrency}\n` +
@@ -896,13 +979,10 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
             `Deposit ID: #${tx.id}\n\n` +
             `✅ USD credit automatically after confirmation.`,
           {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-                [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
-              ],
-            },
+            inline_keyboard: [
+              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
+              [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
+            ],
           },
         );
         return;
@@ -927,9 +1007,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
           orderId,
         );
 
-        await ctx.editMessageText(
+        await sendHtml(
           `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-            `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} USD</b>\n` +
+            `💵 Amount: <b>$${priceUsd.toFixed(2)}</b> → <b>${priceUsd.toFixed(2)} USD</b>\n` +
             `🪙 Send exactly: <b>${payAmount} ${payCurrency.toUpperCase()}</b>\n\n` +
             `📬 Address:\n<code>${payAddress}</code>\n\n` +
             `Payment ID: <code>${paymentId}</code>\n` +
@@ -937,14 +1017,11 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
             `Deposit ID: #${tx.id}\n\n` +
             `✅ After blockchain confirm, USD credits automatically.`,
           {
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                ...(payUrl ? [[{ text: `💳 Open Checkout`, url: payUrl }]] : []),
-                [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-                [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
-              ],
-            },
+            inline_keyboard: [
+              ...(payUrl ? [[{ text: `💳 Open Checkout`, url: payUrl }]] : []),
+              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
+              [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
+            ],
           },
         );
         return;
@@ -959,37 +1036,32 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         orderId,
       );
 
-      await ctx.editMessageText(
+      await sendHtml(
         `⚡ <b>NOWPayments Deposit — ${label}</b>\n\n` +
-          `💵 Amount: <b>$${priceUsd}</b> → <b>${priceUsd} USD</b>\n\n` +
+          `💵 Amount: <b>$${priceUsd.toFixed(2)}</b> → <b>${priceUsd.toFixed(2)} USD</b>\n\n` +
           `👇 Tap <b>Pay Now</b> — the deposit <b>address</b> will open on NOWPayments.\n` +
           `Send the exact amount shown there.\n\n` +
           `Invoice: <code>${invoiceId}</code>\n` +
           `Deposit ID: #${tx.id}\n\n` +
           `✅ After payment, USD credit automatically.`,
         {
-          parse_mode: "HTML",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: `💳 Pay $${priceUsd} — Show Address`, url: payUrl }],
-              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
-              [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
-            ],
-          },
+          inline_keyboard: [
+            [{ text: `💳 Pay $${priceUsd.toFixed(2)} — Show Address`, url: payUrl }],
+            [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
+            [{ text: "🔙 Back to Menu", callback_data: "main_menu" }],
+          ],
         },
       );
     } catch (e) {
-      await ctx.editMessageText(
+      await sendHtml(
         `❌ NOWPayments failed.\n\n${String(e)}\n\nTry again or contact admin.`,
         {
-          reply_markup: {
-            inline_keyboard: [
-              ...(addr?.address
-                ? [[{ text: "🏦 Use Manual Deposit", callback_data: `deposit_manual_${crypto}` }]]
-                : []),
-              [{ text: "🔙 Back", callback_data: "menu_deposit" }],
-            ],
-          },
+          inline_keyboard: [
+            ...(addr?.address
+              ? [[{ text: "🏦 Use Manual Deposit", callback_data: `deposit_manual_${crypto}` }]]
+              : []),
+            [{ text: "🔙 Back", callback_data: "menu_deposit" }],
+          ],
         },
       );
     }
@@ -1076,6 +1148,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       `💰 Balance: <b>${bal.toFixed(0)} USD</b> ($${bal.toFixed(0)})\n` +
       `⏳ Pending withdrawals: <b>${pending}</b>\n` +
       `💵 Min withdraw: <b>$5</b>\n` +
+      `🪙 Coin: <b>LTC only</b>\n` +
       `🪙 Payout coin: <b>Litecoin (LTC) only</b>\n\n` +
       `Tap below to continue:`;
 
