@@ -27,8 +27,11 @@ export const goalGame: ChatGameDefinition = {
   emoji: "⚽",
   guideTitle: "Play Goal Games",
   description: "Real football — only goals (3+) score",
-  modeHint() {
-    return "Miss under 3. Goals 3–5 score points.";
+  modeHint(mode) {
+    if (mode === "normal") return "One real ⚽ — miss under 3, goals 3–5 score.";
+    if (mode === "double") return "Two ⚽ — only goals (3+) count.";
+    if (mode === "crazy") return "One ⚽ × multiplier — goals only!";
+    return "Two ⚽ × multiplier — goals only!";
   },
   throwPlan: plan,
   playRound(mode): RoundResult {

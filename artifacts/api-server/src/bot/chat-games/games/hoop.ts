@@ -27,8 +27,11 @@ export const hoopGame: ChatGameDefinition = {
   emoji: "🏀",
   guideTitle: "Play Hoop Games",
   description: "Real basketball — only made shots (4+) score",
-  modeHint() {
-    return "Make the shot (4–5) to score. Miss = 0.";
+  modeHint(mode) {
+    if (mode === "normal") return "One real 🏀 — make 4–5 to score, miss = 0.";
+    if (mode === "double") return "Two 🏀 — only made shots (4+) count.";
+    if (mode === "crazy") return "One 🏀 × multiplier — makes only!";
+    return "Two 🏀 × multiplier — makes only!";
   },
   throwPlan: plan,
   playRound(mode): RoundResult {

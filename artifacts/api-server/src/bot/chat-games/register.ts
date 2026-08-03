@@ -35,6 +35,7 @@ import {
   cancelPendingThrow,
   resolveUserDice,
   waitForUserDice,
+  type TgDiceEmoji,
 } from "./telegram-dice";
 import { diceGame } from "./games/dice";
 import { footballGame } from "./games/football";
@@ -283,7 +284,6 @@ async function runMatch(
   match.round = 0;
   chatStore.save(match);
 
-  const plan = g.throwPlan?.(mode);
   let lastDiceMsgId = board.messageId;
 
   /**
@@ -309,12 +309,17 @@ async function runMatch(
     let hostScore: { value: number; display: string } | null = null;
     let guestScore: { value: number; display: string } | null = null;
 
+    // Fresh plan each round so crazy multipliers re-roll (like dice)
+    const plan = g.throwPlan?.(mode);
+
     if (plan) {
       let firstInRound = true;
       for (const who of order) {
         const player = who === "host" ? match.host : guestPlayer;
         const isBot = who === "guest" && guestIsBot;
-        const turnLine = `${player.name}, your turn!`;
+        const turnLine = isBot
+          ? `${player.name}, your turn! ${plan.emoji}`
+          : `${player.name}, your turn! Send ${plan.emoji}`;
 
         // First prompt of the match: edit lobby card. Later: reply to last dice.
         const replyTo =
@@ -362,6 +367,29 @@ async function runMatch(
       if (winner === "host") match.scoreHost += 1;
       else if (winner === "guest") match.scoreGuest += 1;
       chatStore.save(match);
+
+      // Show round result with each game's emoji scoring display
+      const pointLine =
+        winner === "draw"
+          ? `Draw · ${hostScore!.display} · ${guestScore!.display}`
+          : winner === "host"
+            ? `${match.host.name} scores! · ${hostScore!.display} vs ${guestScore!.display}`
+            : `${guestName} scores! · ${hostScore!.display} vs ${guestScore!.display}`;
+
+      await showScoreBoard(
+        bot,
+        match.chatId,
+        board,
+        scoreBoardText(
+          match.host.name,
+          guestName,
+          match.scoreHost,
+          match.scoreGuest,
+          pointLine,
+        ),
+        lastDiceMsgId,
+      );
+      await sleep(1400);
     } else {
       const round = g.playRound(mode);
       await sleep(600);
@@ -459,7 +487,7 @@ type ThrowOpts = {
   promptOnBoard: boolean;
 };
 
-/** Collect throws; board already shows whose turn it is. */
+/** Collect real Telegram animated emoji throws for this game. */
 async function collectThrows(
   bot: Telegraf<ChatBotContext>,
   chatId: number,
@@ -471,15 +499,16 @@ async function collectThrows(
 ): Promise<{ value: number; display: string; lastMsgId: number }> {
   const values: number[] = [];
   let lastMsgId = replyTo;
+  const emoji = plan.emoji as TgDiceEmoji;
 
   for (let i = 0; i < plan.throws; i++) {
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
       // Scoreboard already says "Bot, your turn!" — just throw (reply to last dice)
       if (!opts.promptOnBoard || i > 0) {
-        await say(bot, chatId, `${player.name}, your turn!${nLabel}`, lastMsgId);
+        await say(bot, chatId, `${player.name}, your turn! ${emoji}${nLabel}`, lastMsgId);
       }
-      const thrown = await botThrowDice(bot.telegram, chatId, plan.emoji, lastMsgId);
+      const thrown = await botThrowDice(bot.telegram, chatId, emoji, lastMsgId);
       values.push(thrown.value);
       lastMsgId = thrown.messageId;
     } else {
@@ -487,18 +516,18 @@ async function collectThrows(
         await say(
           bot,
           chatId,
-          `${player.name}, your turn!${nLabel ? ` Send ${plan.emoji}${nLabel}` : ""}`,
+          `${player.name}, your turn! Send ${emoji}${nLabel}`,
           lastMsgId,
         );
       }
       try {
-        const thrown = await waitForUserDice(chatId, player.userId, plan.emoji, 45_000);
+        const thrown = await waitForUserDice(chatId, player.userId, emoji, 45_000);
         values.push(thrown.value);
         lastMsgId = thrown.messageId;
-        await sleep(diceAnimMs(plan.emoji));
+        await sleep(diceAnimMs(emoji));
       } catch {
-        await say(bot, chatId, `${player.name} late — auto ${plan.emoji}`, lastMsgId);
-        const thrown = await botThrowDice(bot.telegram, chatId, plan.emoji, lastMsgId);
+        await say(bot, chatId, `${player.name} late — auto ${emoji}`, lastMsgId);
+        const thrown = await botThrowDice(bot.telegram, chatId, emoji, lastMsgId);
         values.push(thrown.value);
         lastMsgId = thrown.messageId;
       }
@@ -515,12 +544,14 @@ function diceAnimMs(emoji: string): number {
 /** Guide text for main casino bot game buttons. */
 export function gameGuideText(g: ChatGameDefinition): string {
   return (
-    `*${g.guideTitle}*\n\n` +
+    `${g.emoji} *${g.guideTitle}*\n\n` +
     `${g.description}\n\n` +
+    `Uses real Telegram *${g.emoji}* animation — same flow as Dice.\n\n` +
     `📣 *How to play*\n` +
     `1. Open our public chat: ${CASINO_CHAT_GROUP}\n` +
     `2. Send \`/${g.command} <bet>\` (example: \`/${g.command} 1\`)\n` +
-    `3. Pick a mode, confirm, then play vs bot or another player\n\n` +
+    `3. Pick mode → race → confirm → Bot or Player\n` +
+    `4. When it's your turn, send ${g.emoji} (the animated sticker)\n\n` +
     `Payout: *1.9x* · Min bet: *$1*\n` +
     `Tap *Open chat* below to join ${CASINO_CHAT_GROUP}`
   );
@@ -536,8 +567,21 @@ export function registerChatGames(bot: Telegraf<ChatBotContext>): void {
     const dice = ctx.message.dice;
     const uid = String(ctx.from.id);
     const chatId = ctx.chat.id;
-    // Don't spam ack — just resolve the pending throw (animation already visible)
-    resolveUserDice(chatId, uid, dice.emoji, dice.value, ctx.message.message_id);
+    const result = resolveUserDice(
+      chatId,
+      uid,
+      dice.emoji,
+      dice.value,
+      ctx.message.message_id,
+    );
+    // Wrong animation for this game (e.g. sent 🎲 during ⚽) — tell them
+    if (!result.ok && result.reason === "wrong_emoji") {
+      await ctx
+        .reply(`Send ${result.expected} for this game (not ${result.got}).`, {
+          reply_to_message_id: ctx.message.message_id,
+        })
+        .catch(() => {});
+    }
   });
 
   /** Short aliases from /start greeting → real chat game commands */

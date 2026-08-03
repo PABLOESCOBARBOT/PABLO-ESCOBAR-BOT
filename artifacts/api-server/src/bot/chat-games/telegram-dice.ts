@@ -34,22 +34,34 @@ export function cancelPendingThrow(chatId: number, userId: string): void {
   p.reject(new Error("cancelled"));
 }
 
-/** Called from dice message handler — returns true if consumed. */
+export type ResolveDiceResult =
+  | { ok: true }
+  | { ok: false; reason: "none" }
+  | { ok: false; reason: "wrong_emoji"; expected: TgDiceEmoji; got: string };
+
+/** Called from dice message handler — returns whether the throw was consumed. */
 export function resolveUserDice(
   chatId: number,
   userId: string,
   emoji: string,
   value: number,
   messageId: number,
-): boolean {
+): ResolveDiceResult {
   const k = key(chatId, userId);
   const p = pending.get(k);
-  if (!p) return false;
-  if (p.emoji !== emoji) return false;
+  if (!p) return { ok: false, reason: "none" };
+  if (p.emoji !== emoji) {
+    return { ok: false, reason: "wrong_emoji", expected: p.emoji, got: emoji };
+  }
   clearTimeout(p.timer);
   pending.delete(k);
   p.resolve({ value, messageId });
-  return true;
+  return { ok: true };
+}
+
+/** Expected emoji for a pending human throw, if any. */
+export function getPendingEmoji(chatId: number, userId: string): TgDiceEmoji | null {
+  return pending.get(key(chatId, userId))?.emoji ?? null;
 }
 
 /** Ask a human to send a Telegram dice sticker; times out soft. */

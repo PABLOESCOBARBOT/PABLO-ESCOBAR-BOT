@@ -27,8 +27,11 @@ export const strikeGame: ChatGameDefinition = {
   emoji: "🎳",
   guideTitle: "Play Strike Games",
   description: "Real bowling — 6 is a strike (double)",
-  modeHint() {
-    return "Roll 6 for a strike (double points).";
+  modeHint(mode) {
+    if (mode === "normal") return "One real 🎳 — 6 is a strike (double).";
+    if (mode === "double") return "Two 🎳 — 6 = strike double.";
+    if (mode === "crazy") return "One 🎳 × multiplier — strikes double!";
+    return "Two 🎳 × multiplier — strikes double!";
   },
   throwPlan: plan,
   playRound(mode): RoundResult {

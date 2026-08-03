@@ -27,8 +27,11 @@ export const bullseyeGame: ChatGameDefinition = {
   emoji: "🎯",
   guideTitle: "Play Bullseye Games",
   description: "Real darts — 6 is bullseye (double)",
-  modeHint() {
-    return "Hit 6 for bullseye double points.";
+  modeHint(mode) {
+    if (mode === "normal") return "One real 🎯 — 6 is bullseye (double).";
+    if (mode === "double") return "Two 🎯 — 6 = bullseye double.";
+    if (mode === "crazy") return "One 🎯 × multiplier — bullseye doubles!";
+    return "Two 🎯 × multiplier — bullseye doubles!";
   },
   throwPlan: plan,
   playRound(mode): RoundResult {

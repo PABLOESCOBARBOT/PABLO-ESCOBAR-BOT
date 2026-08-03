@@ -572,8 +572,8 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: `Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
-            [{ text: "Back", callback_data: "menu_games" }],
+            [{ text: "💬 Open chat", url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
+            [{ text: "🔙 Back", callback_data: "menu_games" }],
           ],
         },
       });
