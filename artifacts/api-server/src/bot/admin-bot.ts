@@ -5,8 +5,12 @@ import {
   getUserById,
   getStats,
   getAllUsers,
+  getAllTelegramIds,
   getPendingDeposits,
   getPendingWithdrawals,
+  getPendingTransactions,
+  getWagerReport,
+  getTopWagers,
   approveTransaction,
   rejectTransaction,
   addChips,
@@ -135,11 +139,10 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     const pendingDep = await getPendingDeposits();
     const pendingWd = await getPendingWithdrawals();
     await ctx.reply(
-      `🛠 *Casino Admin Panel*\n\n` +
-        `Welcome, ${ctx.from!.first_name}!\n\n` +
-        `⏳ Pending deposits: *${pendingDep.length}*\n` +
-        `⏳ Pending withdrawals: *${pendingWd.length}*\n\n` +
-        `Choose a section:`,
+      `👑 *Admin Panel*\n\n` +
+        `Welcome back, Admin.\n` +
+        `Pending deposits: *${pendingDep.length}* · withdrawals: *${pendingWd.length}*\n\n` +
+        `Select an action:`,
       { parse_mode: "Markdown", reply_markup: adminMenu() },
     );
   });
@@ -147,7 +150,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   // ── /menu command ─────────────────────────────────────────────────────────
   bot.command("menu", async (ctx) => {
     ctx.session.step = undefined;
-    await ctx.reply("🛠 *Admin Panel*", {
+    await ctx.reply("👑 *Admin Panel*\n\nSelect an action:", {
       parse_mode: "Markdown",
       reply_markup: adminMenu(),
     });
@@ -208,8 +211,101 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data === "admin_back" || data === "admin_main") {
       sess.step = undefined;
       await ctx.editMessageText(
-        "🛠 *Admin Panel*\n\nChoose a section to manage:",
+        "👑 *Admin Panel*\n\nSelect an action:",
         { parse_mode: "Markdown", reply_markup: adminMenu() },
+      );
+      return;
+    }
+
+    if (data === "admin_pending") {
+      const deps = await getPendingDeposits();
+      const wds = await getPendingWithdrawals();
+      await ctx.editMessageText(
+        `⌛ *Pending*\n\n` +
+          `Deposits: *${deps.length}*\n` +
+          `Withdrawals: *${wds.length}*\n\n` +
+          `Open a section to approve:`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💰 Pending Deposits", callback_data: "admin_pending_deposits" }],
+              [{ text: "📤 Pending Withdrawals", callback_data: "admin_pending_withdrawals" }],
+              [{ text: "🔙 Back", callback_data: "admin_back" }],
+            ],
+          },
+        },
+      );
+      return;
+    }
+
+    if (data === "admin_transactions") {
+      const pending = await getPendingTransactions();
+      let msg = `📋 *Transactions*\n\nPending: *${pending.length}*\n\n`;
+      for (const tx of pending.slice(0, 15)) {
+        msg += `#${tx.id} ${tx.type} ${parseFloat(tx.amount).toFixed(0)} (${tx.status})\n`;
+      }
+      if (!pending.length) msg += `_No pending transactions._`;
+      await ctx.editMessageText(msg, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "⌛ Pending", callback_data: "admin_pending" }],
+            [{ text: "🔙 Back", callback_data: "admin_back" }],
+          ],
+        },
+      });
+      return;
+    }
+
+    if (data === "admin_wager_report") {
+      const r = await getWagerReport();
+      await ctx.editMessageText(
+        `📈 *Wager Report*\n\n` +
+          `Games: *${r.games}*\n` +
+          `Total wagered: *${r.wagered.toFixed(0)}* chips\n` +
+          `Total paid out: *${r.paid.toFixed(0)}* chips\n` +
+          `House edge (approx): *${(r.wagered - r.paid).toFixed(0)}*`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 Back", callback_data: "admin_back" }]],
+          },
+        },
+      );
+      return;
+    }
+
+    if (data === "admin_top_wagers") {
+      const top = await getTopWagers(10);
+      let msg = `🏆 *Top Wagers*\n\n`;
+      if (!top.length) msg += `_No games yet._`;
+      let i = 1;
+      for (const row of top) {
+        const u = await getUserById(row.userId);
+        const name = u?.username ? `@${u.username}` : u?.telegramId ?? `user ${row.userId}`;
+        msg += `${i}. ${name} — *${parseFloat(row.totalBet).toFixed(0)}* (${row.games} games)\n`;
+        i += 1;
+      }
+      await ctx.editMessageText(msg, {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [[{ text: "🔙 Back", callback_data: "admin_back" }]],
+        },
+      });
+      return;
+    }
+
+    if (data === "admin_broadcast") {
+      sess.step = "broadcast";
+      await ctx.editMessageText(
+        `📢 *Broadcast*\n\nSend the message you want to broadcast to all users.\n\nType /cancel to abort.`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 Back", callback_data: "admin_back" }]],
+          },
+        },
       );
       return;
     }
@@ -566,12 +662,17 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data === "admin_stats") {
       const stats = await getStats();
       await ctx.editMessageText(
-        `📊 *Casino Stats*\n\n` +
-        `👥 Total Users: ${stats.totalUsers}\n` +
-        `💰 Chips in Circulation: ${stats.totalChips.toFixed(0)}\n` +
-        `🎮 Total Games Played: ${stats.totalGames}\n` +
-        `⏳ Pending Transactions: ${stats.pendingTx}`,
-        { parse_mode: "Markdown", reply_markup: adminGamesMenu(casinoBotUsername) },
+        `📊 *Stats*\n\n` +
+        `👥 Users: *${stats.totalUsers}*\n` +
+        `💰 Chips: *${stats.totalChips.toFixed(0)}*\n` +
+        `🎮 Games: *${stats.totalGames}*\n` +
+        `⏳ Pending TX: *${stats.pendingTx}*`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🔙 Back", callback_data: "admin_back" }]],
+          },
+        },
       );
       return;
     }
@@ -698,6 +799,36 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (!("text" in ctx.message)) return;
     const text = ctx.message.text.trim();
     const sess = ctx.session;
+
+    if (text === "/cancel") {
+      sess.step = undefined;
+      await ctx.reply("Cancelled.", { reply_markup: adminMenu() });
+      return;
+    }
+
+    // ── Broadcast to all users ──────────────────────────────────────────────
+    if (sess.step === "broadcast") {
+      sess.step = undefined;
+      const ids = await getAllTelegramIds(500);
+      let ok = 0;
+      let fail = 0;
+      await ctx.reply(`📢 Sending to ${ids.length} users…`);
+      for (const id of ids) {
+        try {
+          await notifyCasinoUser(id, text);
+          ok += 1;
+          // gentle rate limit
+          await new Promise((r) => setTimeout(r, 40));
+        } catch {
+          fail += 1;
+        }
+      }
+      await ctx.reply(
+        `📢 Broadcast done.\n✅ Sent: *${ok}*\n❌ Failed: *${fail}*`,
+        { parse_mode: "Markdown", reply_markup: adminMenu() },
+      );
+      return;
+    }
 
     // ── Approve TX: chips amount ────────────────────────────────────────────
     if (sess.step === "approve_chips" && sess.pendingTxId) {

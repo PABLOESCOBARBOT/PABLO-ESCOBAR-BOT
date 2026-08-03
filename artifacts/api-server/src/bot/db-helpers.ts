@@ -638,6 +638,45 @@ export async function getAllUsers(limit = 20) {
     .limit(limit);
 }
 
+/** All telegram IDs for broadcast (capped). */
+export async function getAllTelegramIds(limit = 500): Promise<string[]> {
+  const rows = await db
+    .select({ telegramId: usersTable.telegramId })
+    .from(usersTable)
+    .where(eq(usersTable.isBanned, false))
+    .orderBy(desc(usersTable.createdAt))
+    .limit(limit);
+  return rows.map((r) => r.telegramId);
+}
+
+export async function getWagerReport() {
+  const [row] = await db
+    .select({
+      games: sql<number>`count(*)`,
+      wagered: sql<string>`coalesce(sum(bet_amount::numeric), 0)`,
+      paid: sql<string>`coalesce(sum(payout::numeric), 0)`,
+    })
+    .from(gameSessionsTable);
+  return {
+    games: Number(row?.games ?? 0),
+    wagered: parseFloat(row?.wagered ?? "0"),
+    paid: parseFloat(row?.paid ?? "0"),
+  };
+}
+
+export async function getTopWagers(limit = 10) {
+  return db
+    .select({
+      userId: gameSessionsTable.userId,
+      totalBet: sql<string>`coalesce(sum(bet_amount::numeric), 0)`,
+      games: sql<number>`count(*)`,
+    })
+    .from(gameSessionsTable)
+    .groupBy(gameSessionsTable.userId)
+    .orderBy(sql`sum(bet_amount::numeric) desc`)
+    .limit(limit);
+}
+
 export interface UserFinanceSummary {
   totalDeposited: number;
   totalWithdrawn: number;

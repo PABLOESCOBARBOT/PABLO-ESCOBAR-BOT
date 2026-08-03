@@ -26,23 +26,34 @@ export function groupGamesMenu(botUsername: string): InlineKeyboardMarkup {
   };
 }
 
+/** Home menu — reference layout (Play / Deposit / Withdraw / Bonuses / More / Settings). */
 export function mainMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
+      [{ text: "🎮 Play", callback_data: "menu_games" }],
       [
-        { text: "🎮 Play Games", callback_data: "menu_games" },
-        { text: "💰 Balance", callback_data: "balance" },
+        { text: "💳 Deposit", callback_data: "menu_deposit" },
+        { text: "💸 Withdraw", callback_data: "menu_withdraw" },
       ],
       [
-        { text: "📥 Deposit", callback_data: "menu_deposit" },
-        { text: "📤 Withdraw", callback_data: "menu_withdraw" },
+        { text: "🎁 Bonuses", callback_data: "menu_bonuses" },
+        { text: "📁 More", callback_data: "menu_more" },
       ],
-      [
-        { text: "📊 My Stats", callback_data: "my_stats" },
-        { text: "ℹ️ Help", callback_data: "help" },
-      ],
+      [{ text: "⚙️ Settings", callback_data: "menu_settings" }],
     ],
   };
+}
+
+/** Home menu message body (Pablo branding, DiceGamble-style layout). */
+export function homeMenuText(chips: number, firstName?: string): string {
+  const hi = firstName ? `Hey ${firstName}!\n` : "";
+  return (
+    `${hi}Enjoy the games!\n\n` +
+    `🏠 *Menu*\n` +
+    `Your balance: *$${chips.toFixed(2)}* (*${chips.toFixed(0)} Chips*)\n\n` +
+    `1 Chip = $1 · Withdrawals in *LTC*\n` +
+    `Choose the action:`
+  );
 }
 
 export function gamesMenu(): InlineKeyboardMarkup {
@@ -301,21 +312,28 @@ export function pvpAcceptMenu(challengeId: number): InlineKeyboardMarkup {
 
 // ─── ADMIN BOT KEYBOARDS ──────────────────────────────────────────────────────
 
-/** Main admin panel */
+/** Main admin panel — reference layout */
 export function adminMenu(): InlineKeyboardMarkup {
   return {
     inline_keyboard: [
       [
-        { text: "💰 Deposit", callback_data: "admin_deposit" },
-        { text: "📤 Withdrawal", callback_data: "admin_withdrawal" },
-      ],
-      [
+        { text: "📊 Stats", callback_data: "admin_stats" },
         { text: "👥 Users", callback_data: "admin_users" },
-        { text: "🎁 Bonuses", callback_data: "admin_bonuses" },
       ],
       [
-        { text: "🎮 Games / Stats", callback_data: "admin_games" },
+        { text: "📋 Transactions", callback_data: "admin_transactions" },
+        { text: "⌛ Pending", callback_data: "admin_pending" },
       ],
+      [
+        { text: "📈 Wager Report", callback_data: "admin_wager_report" },
+        { text: "🏆 Top Wagers", callback_data: "admin_top_wagers" },
+      ],
+      [{ text: "📢 Broadcast", callback_data: "admin_broadcast" }],
+      [
+        { text: "💰 Deposits", callback_data: "admin_deposit" },
+        { text: "📤 Withdrawals", callback_data: "admin_withdrawal" },
+      ],
+      [{ text: "🎁 Bonuses", callback_data: "admin_bonuses" }],
     ],
   };
 }

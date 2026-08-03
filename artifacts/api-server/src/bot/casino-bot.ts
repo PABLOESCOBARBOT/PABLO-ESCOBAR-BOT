@@ -49,6 +49,7 @@ const WITHDRAW_COINS = [{ crypto: "ltc", label: "Litecoin (LTC)" }] as const;
 const WITHDRAW_CRYPTO = "ltc";
 import {
   mainMenu,
+  homeMenuText,
   gamesMenu,
   betMenu,
   diceChoiceMenu,
@@ -180,10 +181,10 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
       }
     }
     const chips = await getChips(tgId);
-    await ctx.reply(
-      `🎰 *Casino Bot*\n\n💰 Balance: *${chips.toFixed(0)} Chips*`,
-      { parse_mode: "Markdown", reply_markup: mainMenu() },
-    );
+    await ctx.reply(homeMenuText(chips, ctx.from?.first_name), {
+      parse_mode: "Markdown",
+      reply_markup: mainMenu(),
+    });
   }
 
   // ─── /start ─────────────────────────────────────────────────────────────
@@ -195,7 +196,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     if (isGroup(ctx)) {
       const chips = await getChips(tgId);
       return ctx.reply(
-        `🎰 *Casino Bot*\n\n👋 Hey ${from.first_name}!\n💰 Balance: *${chips.toFixed(0)} Chips*\n\n🎮 Choose a game to play right here!`,
+        `Enjoy the games!\n\n🏠 *Menu*\nBalance: *$${chips.toFixed(2)}*\n\nPlay right here in the group:`,
         { parse_mode: "Markdown", reply_markup: groupGamesMenu(botUsername) },
       );
     }
@@ -214,12 +215,10 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
 
     const chips = await getChips(tgId);
-    await ctx.reply(
-      `🎰 *Welcome to Casino Bot, ${from.first_name}!*\n\n` +
-      `💰 Your balance: *${chips.toFixed(0)} Chips*\n\n` +
-      `1 Chip = $1 USD 💵\n\nPlay games, win big, earn chips! 🏆`,
-      { parse_mode: "Markdown", reply_markup: mainMenu() },
-    );
+    await ctx.reply(homeMenuText(chips, from.first_name), {
+      parse_mode: "Markdown",
+      reply_markup: mainMenu(),
+    });
   });
 
   // ─── /balance ───────────────────────────────────────────────────────────
@@ -238,6 +237,14 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
   bot.command("help", (ctx) => {
     if (isGroup(ctx)) return ctx.reply(helpText(), { parse_mode: "Markdown" });
     return ctx.reply(helpText(), { parse_mode: "Markdown", reply_markup: mainMenu() });
+  });
+
+  // ─── /code — referral stub (menu reference) ─────────────────────────────
+  bot.command("code", async (ctx) => {
+    await ctx.reply(
+      `🎁 *Referral codes*\n\nPromo codes are coming soon.\nWhen live: \`/code YOURCODE\``,
+      { parse_mode: "Markdown", reply_markup: mainMenu() },
+    );
   });
 
   // ─── Chat duel games: /dice 1 → mode → race → confirm → bot|player ─────
@@ -307,17 +314,69 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     // ── Navigation ──────────────────────────────────────────────────────
     if (data === "main_menu") {
       const chips = await getChips(tgId);
-      return ctx.editMessageText(
-        `🎰 *Main Menu*\n\n💰 Balance: *${chips.toFixed(0)} Chips*`,
-        { parse_mode: "Markdown", reply_markup: mainMenu() },
-      );
+      return ctx.editMessageText(homeMenuText(chips, ctx.from?.first_name), {
+        parse_mode: "Markdown",
+        reply_markup: mainMenu(),
+      });
     }
 
     if (data === "menu_games") {
-      return ctx.editMessageText("🎮 *Choose a game to play:*", {
+      return ctx.editMessageText("🎮 *Play*\n\nChoose a game:", {
         parse_mode: "Markdown",
         reply_markup: gamesMenu(),
       });
+    }
+
+    if (data === "menu_bonuses") {
+      return ctx.editMessageText(
+        `🎁 *Bonuses*\n\n` +
+          `Daily / promo bonuses coming soon.\n` +
+          `Referral: use \`/code <code>\` when available.\n\n` +
+          `Stay tuned!`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: "🏠 Menu", callback_data: "main_menu" }]],
+          },
+        },
+      );
+    }
+
+    if (data === "menu_more") {
+      return ctx.editMessageText(
+        `📁 *More*\n\nPick an option:`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📊 My Stats", callback_data: "my_stats" }],
+              [{ text: "ℹ️ Help", callback_data: "help" }],
+              [{ text: "💰 Balance", callback_data: "balance" }],
+              [{ text: "🏠 Menu", callback_data: "main_menu" }],
+            ],
+          },
+        },
+      );
+    }
+
+    if (data === "menu_settings") {
+      const chips = await getChips(tgId);
+      return ctx.editMessageText(
+        `⚙️ *Settings*\n\n` +
+          `Balance: *$${chips.toFixed(2)}* (${chips.toFixed(0)} Chips)\n` +
+          `Withdraw coin: *LTC only*\n` +
+          `1 Chip = $1`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💸 Withdraw", callback_data: "menu_withdraw" }],
+              [{ text: "💳 Deposit", callback_data: "menu_deposit" }],
+              [{ text: "🏠 Menu", callback_data: "main_menu" }],
+            ],
+          },
+        },
+      );
     }
 
     if (data.startsWith("guide_")) {
