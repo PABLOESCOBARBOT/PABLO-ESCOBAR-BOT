@@ -1145,12 +1145,13 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
 
     const text =
       `📤 <b>Withdraw Winnings</b>\n\n` +
-      `💰 Balance: <b>${bal.toFixed(0)} USD</b> ($${bal.toFixed(0)})\n` +
-      `⏳ Pending withdrawals: <b>${pending}</b>\n` +
-      `💵 Min withdraw: <b>$5</b>\n` +
-      `🪙 Coin: <b>LTC only</b>\n` +
-      `🪙 Payout coin: <b>Litecoin (LTC) only</b>\n\n` +
-      `Tap below to continue:`;
+      `💰 Balance: <b>$${bal.toFixed(2)} USD</b>\n` +
+      `⏳ Pending: <b>${pending}</b>\n` +
+      `💵 Min: <b>$5</b>\n` +
+      `🪙 Paid in: <b>Litecoin (LTC) only</b>\n\n` +
+      (bal < 5
+        ? `You need at least <b>$5</b> to withdraw. Deposit or win more first.`
+        : `Tap <b>Litecoin (LTC)</b> below to continue:`);
 
     const markup = withdrawMenu([...WITHDRAW_COINS]);
     return asReply
@@ -1168,7 +1169,24 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
     const chips = await getChips(tgId);
     if (chips < 5) {
-      return ctx.answerCbQuery("❌ Minimum withdrawal is $5. Win more USD first!", { show_alert: true });
+      try {
+        await ctx.answerCbQuery();
+      } catch { /* ignore */ }
+      return ctx.editMessageText(
+        `📤 <b>Withdraw</b>\n\n` +
+          `💰 Balance: <b>$${chips.toFixed(2)} USD</b>\n` +
+          `💵 Min withdraw: <b>$5</b>\n\n` +
+          `You need at least $5 to withdraw.`,
+        {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💳 Deposit", callback_data: "menu_deposit" }],
+              [{ text: "🔙 Back", callback_data: "menu_withdraw" }],
+            ],
+          },
+        },
+      );
     }
     ctx.session.awaitingWithdrawCrypto = crypto;
     delete ctx.session.awaitingWithdrawAmount;
@@ -1179,7 +1197,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     const label = DEFAULT_DEPOSIT_COINS.find(c => c.crypto === crypto)?.label ?? crypto.toUpperCase();
     return ctx.editMessageText(
       `📤 <b>Withdraw — ${label}</b>\n\n` +
-        `💰 Balance: <b>${chips.toFixed(0)} USD</b>\n` +
+        `💰 Balance: <b>$${chips.toFixed(2)} USD</b>\n` +
         `Min: <b>$5</b>\n\n` +
         `Select amount:`,
       { parse_mode: "HTML", reply_markup: withdrawAmountMenu(crypto, chips) },

@@ -62,9 +62,10 @@ export function startWelcomeText(group = "@PabloDice"): string {
     `*Pablo Dice* is the most popular bot for live games with other people!\n` +
     `Our main group with an active community is ${group}\n\n` +
     `📣 *How To Start?*\n` +
-    `1. Make sure you have a balance. You can deposit by entering the /balance command.\n` +
+    `1. Deposit with the *Deposit* button (or /deposit).\n` +
     `2. Go to our group: ${group}\n` +
-    `3. Enter the /dice command and you are ready!\n\n` +
+    `3. Enter the /dice command and you are ready!\n` +
+    `4. Cash out anytime with *Withdraw* (LTC, min $5).\n\n` +
     `📣 *What games can I play?*\n` +
     `• 🎲 Dice - /dice\n` +
     `• 🎳 Bowling - /bowl\n` +
@@ -94,12 +95,14 @@ export function startWelcomeKeyboard(group = "@PabloDice"): InlineKeyboardMarkup
     inline_keyboard: [
       [
         { text: "💳 Deposit", callback_data: "menu_deposit" },
-        { text: "💰 Balance", callback_data: "balance" },
+        { text: "💸 Withdraw", callback_data: "menu_withdraw" },
       ],
       [
-        { text: "💬 Chat", url: `https://t.me/${groupUser}` },
+        { text: "💰 Balance", callback_data: "balance" },
         { text: "🎮 Play", callback_data: "menu_games" },
       ],
+      [{ text: "💬 Chat", url: `https://t.me/${groupUser}` }],
+      [{ text: "🏠 Menu", callback_data: "main_menu" }],
     ],
   };
 }
@@ -139,7 +142,10 @@ export function gamesMenu(): InlineKeyboardMarkup {
         { text: "🏓 Plinko", callback_data: "game_plinko" },
         { text: "⚔️ PvP", callback_data: "game_pvp" },
       ],
-      [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+      [
+        { text: "💸 Withdraw", callback_data: "menu_withdraw" },
+        { text: "🏠 Menu", callback_data: "main_menu" },
+      ],
     ],
   };
 }
@@ -302,10 +308,13 @@ export function depositAmountMenu(crypto: string): InlineKeyboardMarkup {
 
 export function withdrawMenu(addresses: { crypto: string; label: string }[]): InlineKeyboardMarkup {
   const rows = addresses.map(a => [
-    { text: a.label, callback_data: `withdraw_crypto_${a.crypto}` },
+    { text: `💸 ${a.label}`, callback_data: `withdraw_crypto_${a.crypto}` },
   ]);
   rows.push([{ text: "📜 My Withdrawals", callback_data: "withdraw_history" }]);
-  rows.push([{ text: "🔙 Back", callback_data: "main_menu" }]);
+  rows.push([
+    { text: "💳 Deposit", callback_data: "menu_deposit" },
+    { text: "🏠 Menu", callback_data: "main_menu" },
+  ]);
   return { inline_keyboard: rows };
 }
 
