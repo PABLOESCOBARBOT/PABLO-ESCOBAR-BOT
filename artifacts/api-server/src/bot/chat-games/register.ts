@@ -287,21 +287,24 @@ async function runMatch(
   let lastDiceMsgId = board.messageId;
 
   /**
-   * Turn order (player vs bot):
-   *  Round 1 — user starts, then bot
-   *  Round 2 — bot starts, then user
-   *  Round 3+ — whoever threw last in the previous round starts
+   * Turn order (same for every game):
+   *  Round 1 — host starts
+   *  Round 2+ — whoever threw LAST in the previous round starts
+   *    (so if you finished the round, you also open the next one)
+   *
+   * Message pattern each round:
+   *  1) "Name, Your Turn:"  → player throws emoji
+   *  2) "Bot, Your Turn:"   → bot throws emoji
+   *  3) Scorecard (only after both have thrown)
    */
-  let starter: "host" | "guest" = "host";
-  let lastThrower: "host" | "guest" = "guest";
+  let lastThrower: "host" | "guest" = "host";
 
   while (match.scoreHost < raceTo && match.scoreGuest < raceTo) {
     match.round += 1;
     chatStore.save(match);
 
-    if (match.round === 1) starter = "host";
-    else if (match.round === 2) starter = "guest";
-    else starter = lastThrower;
+    const starter: "host" | "guest" =
+      match.round === 1 ? "host" : lastThrower;
 
     const order: Array<"host" | "guest"> =
       starter === "host" ? ["host", "guest"] : ["guest", "host"];
@@ -309,35 +312,16 @@ async function runMatch(
     let hostScore: { value: number; display: string } | null = null;
     let guestScore: { value: number; display: string } | null = null;
 
-    // Fresh plan each round so crazy multipliers re-roll (like dice)
+    // Fresh plan each round so crazy multipliers re-roll
     const plan = g.throwPlan?.(mode);
 
     if (plan) {
-      let firstInRound = true;
       for (const who of order) {
         const player = who === "host" ? match.host : guestPlayer;
         const isBot = who === "guest" && guestIsBot;
-        const turnLine = isBot
-          ? `${player.name}, your turn! ${plan.emoji}`
-          : `${player.name}, your turn! Send ${plan.emoji}`;
 
-        // First prompt of the match: edit lobby card. Later: reply to last dice.
-        const replyTo =
-          match.round === 1 && firstInRound ? undefined : lastDiceMsgId;
-        await showScoreBoard(
-          bot,
-          match.chatId,
-          board,
-          scoreBoardText(
-            match.host.name,
-            guestName,
-            match.scoreHost,
-            match.scoreGuest,
-            turnLine,
-          ),
-          replyTo,
-        );
-        firstInRound = false;
+        // Simple turn line only — never post the scorecard between throws
+        await say(bot, match.chatId, `${player.name}, Your Turn:`, lastDiceMsgId);
 
         const thrown = await collectThrows(
           bot,
@@ -368,7 +352,7 @@ async function runMatch(
       else if (winner === "guest") match.scoreGuest += 1;
       chatStore.save(match);
 
-      // Show round result with each game's emoji scoring display
+      // Scorecard ONLY after both players have thrown
       const pointLine =
         winner === "draw"
           ? `Draw · ${hostScore!.display} · ${guestScore!.display}`
@@ -389,7 +373,7 @@ async function runMatch(
         ),
         lastDiceMsgId,
       );
-      await sleep(1400);
+      await sleep(1200);
     } else {
       const round = g.playRound(mode);
       await sleep(600);
@@ -487,7 +471,10 @@ type ThrowOpts = {
   promptOnBoard: boolean;
 };
 
-/** Collect real Telegram animated emoji throws for this game. */
+/**
+ * Collect real Telegram animated emoji throws.
+ * Caller already sent the "Name, Your Turn:" line for the first throw.
+ */
 async function collectThrows(
   bot: Telegraf<ChatBotContext>,
   chatId: number,
@@ -504,21 +491,16 @@ async function collectThrows(
   for (let i = 0; i < plan.throws; i++) {
     const nLabel = plan.throws > 1 ? ` (${i + 1}/${plan.throws})` : "";
     if (isBot) {
-      // Scoreboard already says "Bot, your turn!" — just throw (reply to last dice)
+      // First throw: "Bot, Your Turn:" already sent by runMatch — just animate
       if (!opts.promptOnBoard || i > 0) {
-        await say(bot, chatId, `${player.name}, your turn! ${emoji}${nLabel}`, lastMsgId);
+        await say(bot, chatId, `${player.name}, Your Turn:${nLabel}`, lastMsgId);
       }
       const thrown = await botThrowDice(bot.telegram, chatId, emoji, lastMsgId);
       values.push(thrown.value);
       lastMsgId = thrown.messageId;
     } else {
       if (!opts.promptOnBoard || i > 0) {
-        await say(
-          bot,
-          chatId,
-          `${player.name}, your turn! Send ${emoji}${nLabel}`,
-          lastMsgId,
-        );
+        await say(bot, chatId, `${player.name}, Your Turn:${nLabel}`, lastMsgId);
       }
       try {
         const thrown = await waitForUserDice(chatId, player.userId, emoji, 45_000);
