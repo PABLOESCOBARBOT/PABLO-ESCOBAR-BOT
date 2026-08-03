@@ -11,8 +11,5 @@ if [ -z "${CASINO_BOT_TOKEN:-}" ]; then
   exit 1
 fi
 
-echo "Pushing DB schema…"
-pnpm --filter @workspace/db run push
-
 echo "Starting casino + admin bots on PORT=${PORT:-3000}…"
 exec node --enable-source-maps artifacts/api-server/dist/index.mjs

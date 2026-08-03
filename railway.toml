@@ -1,15 +1,16 @@
-# Railway 24/7 deploy (GitHub → this branch)
-# 1) Service Settings → Source → branch: cursor/fix-casino-bot-bugs-93df
-# 2) Add Postgres plugin
-# 3) Variables → Raw Editor → paste from DEPLOY.md
+# Railway 24/7 deploy
+# Variables: CASINO_BOT_TOKEN, ADMIN_BOT_TOKEN, ADMIN_TELEGRAM_IDS,
+#            CASINO_BOT_USERNAME, PORT=3000
+# DATABASE_URL: Add Variable → Reference → Postgres → DATABASE_URL
 
 [build]
 builder = "NIXPACKS"
 buildCommand = "corepack enable && corepack prepare pnpm@10.33.3 --activate && sed -i 's/minimumReleaseAge: 1440/minimumReleaseAge: 0/' pnpm-workspace.yaml && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build"
 
 [deploy]
-startCommand = "pnpm --filter @workspace/db run push && node --enable-source-maps artifacts/api-server/dist/index.mjs"
+# Only node — no pnpm/drizzle-kit at runtime (that was crashing healthcheck)
+startCommand = "node --enable-source-maps artifacts/api-server/dist/index.mjs"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/health"
-healthcheckTimeout = 60
+healthcheckTimeout = 120
