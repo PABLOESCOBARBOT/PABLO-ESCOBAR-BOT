@@ -112,8 +112,8 @@ interface SessionData {
   pvpBet?: number;
 }
 
-/** Soft UI min — gateway may require higher (~$19+). Real min checked per-coin at create time. */
-const DEPOSIT_MIN_USD = 1;
+/** Minimum deposit in USD. Below gateway address-min we fall back to checkout link. */
+const DEPOSIT_MIN_USD = 5;
 
 type BotContext = Context & { session: SessionData };
 
@@ -350,10 +350,15 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
     }
 
     if (data === "menu_games") {
-      return ctx.editMessageText("🎮 *Play*\n\nChoose a game:", {
-        parse_mode: "Markdown",
-        reply_markup: gamesMenu(),
-      });
+      return ctx.editMessageText(
+        `🎮 *Play*\n\n` +
+          `Choose a game below.\n` +
+          `Live duels run in ${CASINO_CHAT_GROUP} — tap a game for the guide.`,
+        {
+          parse_mode: "Markdown",
+          reply_markup: gamesMenu(),
+        },
+      );
     }
 
     if (data === "menu_bonuses") {
@@ -416,7 +421,7 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: `💬 Open ${CASINO_CHAT_GROUP}`, url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
+            [{ text: "💬 Open chat", url: `https://t.me/${CASINO_CHAT_GROUP.replace("@", "")}` }],
             [{ text: "🔙 Back", callback_data: "menu_games" }],
           ],
         },
@@ -1001,6 +1006,34 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         `Casino deposit — ${label} — user ${tgId}`,
       );
 
+      if (checkout.mode === "invoice_link") {
+        const invoiceId = String(checkout.invoice.id);
+        const tx = await createAutoDeposit(
+          tgId,
+          crypto,
+          String(priceUsd),
+          `inv-${invoiceId}`,
+          checkout.invoice.invoice_url,
+          orderId,
+        );
+        await sendHtml(
+          `📥 <b>Deposit — ${label}</b>\n\n` +
+            `💵 Amount: <b>$${priceUsd.toFixed(2)} USD</b>\n` +
+            `Min: <b>$${DEPOSIT_MIN_USD}</b>\n\n` +
+            `Tap below to get your deposit address, then send the exact crypto amount.\n` +
+            `✅ After payment confirms, USD is added automatically.\n\n` +
+            `Deposit ID: #${tx.id}`,
+          {
+            inline_keyboard: [
+              [{ text: "💳 Get Deposit Address", url: checkout.invoice.invoice_url }],
+              [{ text: "🔄 Check Status", callback_data: `deposit_check_${tx.id}` }],
+              [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+            ],
+          },
+        );
+        return;
+      }
+
       const payment = checkout.payment;
       const paymentId = String(payment.payment_id);
       const payAmount = payment.pay_amount ?? priceUsd;
@@ -1033,9 +1066,9 @@ export function createCasinoBot(token: string): Telegraf<BotContext> {
         .replace(/API error \(\d+\):\s*/gi, "")
         .trim() || "Please try again.";
       await sendHtml(
-        `❌ <b>Could not create deposit address</b>\n\n` +
+        `❌ <b>Could not create deposit</b>\n\n` +
           `${nice}\n\n` +
-          `Tip: try <b>$20+</b> (network minimum) or another crypto.`,
+          `Minimum is <b>$${DEPOSIT_MIN_USD} USD</b>. Try again or pick another crypto.`,
         {
           inline_keyboard: [
             [{ text: "🔄 Try Again", callback_data: `deposit_crypto_${crypto}` }],

@@ -384,18 +384,24 @@ export async function findWithdrawalByPayoutId(payoutId: string): Promise<Transa
 /** Find a pending deposit by NOWPayments order_id stored in note: "NOWPayments order <id>" */
 export async function findDepositByOrderId(orderId: string): Promise<Transaction | null> {
   // Prefer matching note; also support order_id == deposit-<txId>
-  const byNote = await db
-    .select()
-    .from(transactionsTable)
-    .where(
-      and(
-        eq(transactionsTable.status, "pending"),
-        eq(transactionsTable.type, "deposit"),
-        eq(transactionsTable.note, `NOWPayments order ${orderId}`),
-      ),
-    )
-    .limit(1);
-  if (byNote[0]) return byNote[0];
+  // Invoice path appends "-inv" to order_id — also match the base order id.
+  const candidates = [orderId];
+  if (orderId.endsWith("-inv")) candidates.push(orderId.slice(0, -4));
+
+  for (const id of candidates) {
+    const byNote = await db
+      .select()
+      .from(transactionsTable)
+      .where(
+        and(
+          eq(transactionsTable.status, "pending"),
+          eq(transactionsTable.type, "deposit"),
+          eq(transactionsTable.note, `NOWPayments order ${id}`),
+        ),
+      )
+      .limit(1);
+    if (byNote[0]) return byNote[0];
+  }
 
   const m = /^deposit-(\d+)$/.exec(orderId);
   if (!m) return null;

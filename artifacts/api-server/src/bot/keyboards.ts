@@ -96,8 +96,10 @@ export function startWelcomeKeyboard(group = "@PabloDice"): InlineKeyboardMarkup
         { text: "💳 Deposit", callback_data: "menu_deposit" },
         { text: "💰 Balance", callback_data: "balance" },
       ],
-      [{ text: `💬 Open ${group}`, url: `https://t.me/${groupUser}` }],
-      [{ text: "🎮 Play / Menu", callback_data: "main_menu" }],
+      [
+        { text: "💬 Chat", url: `https://t.me/${groupUser}` },
+        { text: "🎮 Play", callback_data: "menu_games" },
+      ],
     ],
   };
 }

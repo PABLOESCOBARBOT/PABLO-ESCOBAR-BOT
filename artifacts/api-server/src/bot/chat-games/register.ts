@@ -516,7 +516,13 @@ function diceAnimMs(emoji: string): number {
 export function gameGuideText(g: ChatGameDefinition): string {
   return (
     `*${g.guideTitle}*\n\n` +
-    `Play with a friend or the bot using \`/${g.command}\` in our group — ${CASINO_CHAT_GROUP}`
+    `${g.description}\n\n` +
+    `📣 *How to play*\n` +
+    `1. Open our public chat: ${CASINO_CHAT_GROUP}\n` +
+    `2. Send \`/${g.command} <bet>\` (example: \`/${g.command} 1\`)\n` +
+    `3. Pick a mode, confirm, then play vs bot or another player\n\n` +
+    `Payout: *1.9x* · Min bet: *$1*\n` +
+    `Tap *Open chat* below to join ${CASINO_CHAT_GROUP}`
   );
 }
 
