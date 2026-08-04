@@ -1,4 +1,4 @@
-import { db } from "@workspace/db";
+import { db, pool } from "@workspace/db";
 import {
   usersTable,
   transactionsTable,
@@ -11,6 +11,81 @@ import {
   type DepositAddress,
 } from "@workspace/db";
 import { eq, sql, desc, and, gte, isNull } from "drizzle-orm";
+
+/** Durable admin wizard state (Postgres — not Telegraf memory). */
+export type AdminFlowState = {
+  step?: string;
+  pendingUserId?: string;
+  pendingTxId?: number;
+  pendingCrypto?: string;
+  pendingAddr?: string;
+};
+
+export async function loadAdminFlow(adminTgId: string): Promise<AdminFlowState> {
+  const res = await pool.query<{
+    step: string | null;
+    pending_user_id: string | null;
+    pending_tx_id: number | null;
+    pending_crypto: string | null;
+    pending_addr: string | null;
+  }>(
+    `SELECT step, pending_user_id, pending_tx_id, pending_crypto, pending_addr
+     FROM admin_flows WHERE admin_tg_id = $1`,
+    [adminTgId],
+  );
+  const row = res.rows[0];
+  if (!row) return {};
+  return {
+    step: row.step ?? undefined,
+    pendingUserId: row.pending_user_id ?? undefined,
+    pendingTxId: row.pending_tx_id ?? undefined,
+    pendingCrypto: row.pending_crypto ?? undefined,
+    pendingAddr: row.pending_addr ?? undefined,
+  };
+}
+
+export async function saveAdminFlow(
+  adminTgId: string,
+  state: AdminFlowState,
+): Promise<void> {
+  const hasAnything =
+    state.step ||
+    state.pendingUserId ||
+    state.pendingTxId ||
+    state.pendingCrypto ||
+    state.pendingAddr;
+  if (!hasAnything) {
+    await pool.query(`DELETE FROM admin_flows WHERE admin_tg_id = $1`, [adminTgId]);
+    return;
+  }
+  await pool.query(
+    `INSERT INTO admin_flows (
+       admin_tg_id, step, pending_user_id, pending_tx_id, pending_crypto, pending_addr, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     ON CONFLICT (admin_tg_id) DO UPDATE SET
+       step = EXCLUDED.step,
+       pending_user_id = EXCLUDED.pending_user_id,
+       pending_tx_id = EXCLUDED.pending_tx_id,
+       pending_crypto = EXCLUDED.pending_crypto,
+       pending_addr = EXCLUDED.pending_addr,
+       updated_at = NOW()`,
+    [
+      adminTgId,
+      state.step ?? null,
+      state.pendingUserId ?? null,
+      state.pendingTxId ?? null,
+      state.pendingCrypto ?? null,
+      state.pendingAddr ?? null,
+    ],
+  );
+}
+
+export type TelegramChatLookup = (username: string) => Promise<{
+  telegramId: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+} | null>;
 
 /** Starting house bankroll shown on /housebalance */
 export const HOUSE_BANK_START = 15_000;
@@ -97,10 +172,12 @@ export async function findUserByTgOrUsername(input: string): Promise<User | null
 
 /**
  * Admin resolve: find by ID/@username.
- * If numeric Telegram ID is new (never /start'd casino bot), create the account.
+ * - Numeric ID: auto-create shell account if missing.
+ * - @username: DB first, then optional Telegram getChat lookup → create.
  */
 export async function resolveUserForAdmin(
   input: string,
+  lookupChat?: TelegramChatLookup,
 ): Promise<{ user: User; created: boolean } | { user: null; created: false; hint: string }> {
   const raw = input.trim().replace(/^@/, "");
   if (!raw) {
@@ -110,26 +187,45 @@ export async function resolveUserForAdmin(
   const existing = await findUserByTgOrUsername(raw);
   if (existing) return { user: existing, created: false };
 
-  // Username unknown — we can't invent a Telegram ID from a handle alone
-  if (!/^\d{3,}$/.test(raw)) {
-    return {
-      user: null,
-      created: false,
-      hint:
-        "Username not in database. Ask them to open the casino bot and tap /start, " +
-        "or enter their numeric Telegram ID (from @userinfobot).",
-    };
+  // Numeric Telegram ID → create shell account
+  if (/^\d{3,}$/.test(raw)) {
+    try {
+      const user = await getOrCreateUser(raw);
+      return { user, created: true };
+    } catch (e) {
+      throw new Error(
+        `Could not create user ${raw}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
-  // Numeric ID: create shell account so admin can credit immediately
-  try {
-    const user = await getOrCreateUser(raw);
-    return { user, created: true };
-  } catch (e) {
-    throw new Error(
-      `Could not create user ${raw}: ${e instanceof Error ? e.message : String(e)}`,
-    );
+  // @username not in DB — resolve via Telegram API when available
+  if (lookupChat) {
+    try {
+      const chat = await lookupChat(raw);
+      if (chat?.telegramId) {
+        const user = await getOrCreateUser(
+          chat.telegramId,
+          chat.username ?? raw,
+          chat.firstName,
+          chat.lastName,
+        );
+        return { user, created: true };
+      }
+    } catch (e) {
+      throw new Error(
+        `Telegram lookup failed for @${raw}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
+
+  return {
+    user: null,
+    created: false,
+    hint:
+      `Username @${raw} not found. Use numeric Telegram ID (from @userinfobot), ` +
+      `or ask them to /start the casino bot once.`,
+  };
 }
 
 export async function getUserById(id: number): Promise<User | null> {

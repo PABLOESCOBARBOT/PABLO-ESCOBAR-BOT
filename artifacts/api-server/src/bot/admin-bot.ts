@@ -5,6 +5,8 @@ import {
   getUserById,
   findUserByTgOrUsername,
   resolveUserForAdmin,
+  loadAdminFlow,
+  saveAdminFlow,
   getStats,
   getAllUsers,
   getAllTelegramIds,
@@ -23,6 +25,7 @@ import {
   getApprovedWithdrawalsToday,
   getTransactionById,
   getUserFinanceSummary,
+  type TelegramChatLookup,
 } from "./db-helpers";
 import {
   adminMenu,
@@ -134,6 +137,34 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
   const casinoBotUsername = (process.env["CASINO_BOT_USERNAME"] ?? "").replace("@", "");
 
+  /** Resolve @username → Telegram ID via Bot API (works without casino /start). */
+  const lookupChat: TelegramChatLookup = async (username) => {
+    try {
+      const chat = await bot.telegram.getChat(
+        username.startsWith("@") ? username : `@${username}`,
+      );
+      const telegramId = String(chat.id);
+      const uname =
+        "username" in chat && typeof chat.username === "string"
+          ? chat.username
+          : username.replace(/^@/, "");
+      const firstName =
+        "first_name" in chat && typeof chat.first_name === "string"
+          ? chat.first_name
+          : undefined;
+      const lastName =
+        "last_name" in chat && typeof chat.last_name === "string"
+          ? chat.last_name
+          : undefined;
+      return { telegramId, username: uname, firstName, lastName };
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveAdminUser = (input: string) =>
+    resolveUserForAdmin(input, lookupChat);
+
   // ── Auth middleware ───────────────────────────────────────────────────────
   bot.use(async (ctx, next) => {
     const id = String(ctx.from?.id ?? "");
@@ -146,15 +177,57 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     return next();
   });
 
+  // ── Durable flow state (Postgres) — source of truth across restarts ───────
+  bot.use(async (ctx, next) => {
+    const id = String(ctx.from?.id ?? "");
+    if (!id) return next();
+    try {
+      const saved = await loadAdminFlow(id);
+      // DB wins: hydrate or clear so memory can't drift after redeploy
+      ctx.session.step = saved.step;
+      ctx.session.pendingUserId = saved.pendingUserId;
+      ctx.session.pendingTxId = saved.pendingTxId;
+      ctx.session.pendingCrypto = saved.pendingCrypto;
+      ctx.session.pendingAddr = saved.pendingAddr;
+    } catch (e) {
+      logger.warn({ e }, "loadAdminFlow failed — using memory session only");
+    }
+    try {
+      await next();
+    } finally {
+      try {
+        await saveAdminFlow(id, {
+          step: ctx.session.step,
+          pendingUserId: ctx.session.pendingUserId,
+          pendingTxId: ctx.session.pendingTxId,
+          pendingCrypto: ctx.session.pendingCrypto,
+          pendingAddr: ctx.session.pendingAddr,
+        });
+      } catch (e) {
+        logger.warn({ e }, "saveAdminFlow failed");
+      }
+    }
+  });
+
+  function clearFlow(sess: AdminSession): void {
+    sess.step = undefined;
+    delete sess.pendingUserId;
+    delete sess.pendingTxId;
+    delete sess.pendingCrypto;
+    delete sess.pendingAddr;
+    delete sess.pendingChips;
+  }
+
   // ── /start ────────────────────────────────────────────────────────────────
   bot.start(async (ctx) => {
-    ctx.session.step = undefined;
+    clearFlow(ctx.session);
     const pendingDep = await getPendingDeposits();
     const pendingWd = await getPendingWithdrawals();
     await ctx.reply(
       `👑 *Admin Panel*\n\n` +
         `Welcome back, Admin.\n` +
         `Pending deposits: *${pendingDep.length}* · withdrawals: *${pendingWd.length}*\n\n` +
+        `Give USD fast:\n\`/give 7007935695 50\`\n\n` +
         `Select an action:`,
       { parse_mode: "Markdown", reply_markup: adminMenu() },
     );
@@ -162,7 +235,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
   // ── /menu command ─────────────────────────────────────────────────────────
   bot.command("menu", async (ctx) => {
-    ctx.session.step = undefined;
+    clearFlow(ctx.session);
     await ctx.reply("👑 *Admin Panel*\n\nSelect an action:", {
       parse_mode: "Markdown",
       reply_markup: adminMenu(),
@@ -171,7 +244,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
   // Shortcut commands (shown in Telegram Menu button)
   bot.command("deposits", async (ctx) => {
-    ctx.session.step = undefined;
+    clearFlow(ctx.session);
     const pending = await getPendingDeposits();
     await ctx.reply(
       `💰 *Deposit Management*\n\n⏳ Pending: *${pending.length}*`,
@@ -180,7 +253,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   });
 
   bot.command("withdrawals", async (ctx) => {
-    ctx.session.step = undefined;
+    clearFlow(ctx.session);
     const pending = await getPendingWithdrawals();
     await ctx.reply(
       `📤 *Withdrawal Management*\n\n⏳ Pending: *${pending.length}*`,
@@ -189,7 +262,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   });
 
   bot.command("users", async (ctx) => {
-    ctx.session.step = undefined;
+    clearFlow(ctx.session);
     await ctx.reply(
       "👥 *User Management*\n\nView details, credit/debit, ban users.",
       { parse_mode: "Markdown", reply_markup: adminUsersMenu() },
@@ -197,7 +270,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   });
 
   bot.command("stats", async (ctx) => {
-    ctx.session.step = undefined;
+    clearFlow(ctx.session);
     const stats = await getStats();
     await ctx.reply(
       `📊 *Casino Stats*\n\n` +
@@ -216,16 +289,15 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   bot.command("give", async (ctx) => {
     const parts = (ctx.message.text ?? "").trim().split(/\s+/);
     const target = parts[1];
-    const amountRaw = parts[2];
+    const amountRaw = parts[2]?.replace(/[$,]/g, "");
     if (!target) {
       await ctx.reply(
-        "Usage:\n`/give <telegram_id> <amount>`\n`/give <telegram_id>` (then enter amount)\n\nExample: `/give 7007935695 50`",
-        { parse_mode: "Markdown" },
+        "Usage:\n/give <telegram_id_or_@user> <amount>\n\nExamples:\n/give 7007935695 50\n/give @CartierBackup 50",
       );
       return;
     }
     try {
-      const resolved = await resolveUserForAdmin(target);
+      const resolved = await resolveAdminUser(target);
       if (!resolved.user) {
         await ctx.reply(`❌ ${resolved.hint}`);
         return;
@@ -287,7 +359,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     // ─────────────────────────────────────────────────────────────────────
 
     if (data === "admin_back" || data === "admin_main") {
-      sess.step = undefined;
+      clearFlow(sess);
       await ctx.editMessageText(
         "👑 *Admin Panel*\n\nSelect an action:",
         { parse_mode: "Markdown", reply_markup: adminMenu() },
@@ -929,7 +1001,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     const sess = ctx.session;
 
     if (text === "/cancel") {
-      sess.step = undefined;
+      clearFlow(sess);
       await ctx.reply("Cancelled.", { reply_markup: adminMenu() });
       return;
     }
@@ -989,7 +1061,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     // ── Add chips: user ID or @username ─────────────────────────────────────
     if (sess.step === "add_chips_user") {
       try {
-        const resolved = await resolveUserForAdmin(text);
+        const resolved = await resolveAdminUser(text);
         if (!resolved.user) {
           await ctx.reply(`❌ ${resolved.hint}`);
           return;
@@ -998,7 +1070,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         sess.pendingUserId = user.telegramId;
         sess.step = "add_chips_amount";
         const createdNote = resolved.created
-          ? "\n🆕 New account created (they hadn't /start'd yet).\n"
+          ? "\n🆕 New account created.\n"
           : "\n";
         await ctx.reply(
           `✅ User: ${user.username ? `@${user.username}` : user.firstName ?? "—"}\n` +
@@ -1052,7 +1124,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
     // ── Remove chips: user ID or @username ──────────────────────────────────
     if (sess.step === "remove_chips_user") {
-      const resolved = await resolveUserForAdmin(text);
+      const resolved = await resolveAdminUser(text);
       if (!resolved.user) {
         await ctx.reply(`❌ ${resolved.hint}`);
         return;
@@ -1190,11 +1262,10 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       const looksLikeUsername = /^@?[A-Za-z][A-Za-z0-9_]{4,}$/.test(text.trim());
       if (looksLikeTgId || looksLikeUsername) {
         try {
-          const resolved = await resolveUserForAdmin(text);
+          const resolved = await resolveAdminUser(text);
           if (!resolved.user) {
             await ctx.reply(
-              `❌ ${resolved.hint}\n\nTip: \`/give 7007935695 50\` works anytime.`,
-              { parse_mode: "Markdown" },
+              `❌ ${resolved.hint}\n\nTip: /give 7007935695 50 works anytime.`,
             );
             return;
           }

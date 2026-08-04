@@ -91,5 +91,18 @@ export async function ensureSchema(): Promise<void> {
       ON CONFLICT (id) DO NOTHING;
   `);
 
+  // Admin multi-step flows — survives process restarts (unlike in-memory Telegraf session)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_flows (
+      admin_tg_id TEXT PRIMARY KEY,
+      step TEXT,
+      pending_user_id TEXT,
+      pending_tx_id INTEGER,
+      pending_crypto TEXT,
+      pending_addr TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
   logger.info("DB schema ready");
 }
