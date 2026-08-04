@@ -3,6 +3,7 @@ import { logger } from "../lib/logger";
 import {
   getUserByTgId,
   getUserById,
+  findUserByTgOrUsername,
   getStats,
   getAllUsers,
   getAllTelegramIds,
@@ -63,6 +64,17 @@ function isAdmin(tgId: string): boolean {
   return parseAdminIds().includes(tgId);
 }
 
+/** Escape Telegram legacy Markdown special chars (usernames often contain `_`). */
+function escMd(s: string): string {
+  return s.replace(/([_*`\[])/g, "\\$1");
+}
+
+function displayUser(user: { username?: string | null; firstName?: string | null; telegramId: string }): string {
+  if (user.username) return `@${escMd(user.username)}`;
+  if (user.firstName) return escMd(user.firstName);
+  return user.telegramId;
+}
+
 async function buildUserDetail(telegramId: string): Promise<{
   text: string;
   keyboard: Array<Array<{ text: string; callback_data: string }>>;
@@ -70,7 +82,7 @@ async function buildUserDetail(telegramId: string): Promise<{
   const user = await getUserByTgId(telegramId);
   if (!user) return null;
   const fin = await getUserFinanceSummary(telegramId);
-  const name = user.username ? `@${user.username}` : `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "User";
+  const name = displayUser(user);
 
   let recent = "";
   if (fin?.recentTx.length) {
@@ -78,7 +90,7 @@ async function buildUserDetail(telegramId: string): Promise<{
     for (const t of fin.recentTx.slice(0, 5)) {
       const emoji =
         t.status === "approved" ? "✅" : t.status === "pending" ? "⏳" : "❌";
-      recent += `${emoji} #${t.id} ${t.type} ${parseFloat(t.amount).toFixed(0)} (${t.status})\n`;
+      recent += `${emoji} #${t.id} ${escMd(t.type)} ${parseFloat(t.amount).toFixed(0)} (${t.status})\n`;
     }
   }
 
@@ -692,11 +704,12 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
       for (const u of users) {
         const name = u.username ? `@${u.username}` : u.firstName ?? u.telegramId;
+        const safeName = displayUser(u);
         const fin = await getUserFinanceSummary(u.telegramId);
-        msg += `${u.isBanned ? "🚫" : "✅"} ${name} — bal ${parseFloat(u.chips).toFixed(0)} | dep ${(fin?.totalDeposited ?? 0).toFixed(0)}\n`;
+        msg += `${u.isBanned ? "🚫" : "✅"} ${safeName} — bal ${parseFloat(u.chips).toFixed(0)} | dep ${(fin?.totalDeposited ?? 0).toFixed(0)}\n`;
         keyboard.push([
           {
-            text: `${u.isBanned ? "🚫" : "👤"} ${name} (${parseFloat(u.chips).toFixed(0)})`,
+            text: `${u.isBanned ? "🚫" : "👤"} ${name} (${parseFloat(u.chips).toFixed(0)})`.slice(0, 64),
             callback_data: `admin_user_${u.telegramId}`,
           },
         ]);
@@ -705,10 +718,17 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         { text: "🔍 Find User", callback_data: "admin_find_user" },
         { text: "🔙 Back", callback_data: "admin_users" },
       ]);
-      await ctx.editMessageText(msg, {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: keyboard },
-      });
+      try {
+        await ctx.editMessageText(msg, {
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: keyboard },
+        });
+      } catch {
+        await ctx.editMessageText(
+          `👥 Recent Users (${users.length})\n\nTap a user below:`,
+          { reply_markup: { inline_keyboard: keyboard } },
+        );
+      }
       return;
     }
 
@@ -719,10 +739,18 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         await ctx.editMessageText("❌ User not found.", { reply_markup: adminUsersMenu() });
         return;
       }
-      await ctx.editMessageText(detail.text, {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: detail.keyboard },
-      });
+      try {
+        await ctx.editMessageText(detail.text, {
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: detail.keyboard },
+        });
+      } catch (e) {
+        logger.warn({ e, uid }, "admin_user detail markdown failed");
+        await ctx.editMessageText(
+          `User ${uid}\nBalance: see buttons below.`,
+          { reply_markup: { inline_keyboard: detail.keyboard } },
+        );
+      }
       return;
     }
 
@@ -731,10 +759,21 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.pendingUserId = uid;
       sess.step = "add_chips_amount";
       const user = await getUserByTgId(uid);
-      await ctx.editMessageText(
-        `➕ *Credit USD*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many USD to *add*?`,
-        { parse_mode: "Markdown", reply_markup: undefined },
-      );
+      const label = user ? displayUser(user) : uid;
+      const bal = user ? parseFloat(user.chips).toFixed(0) : "?";
+      try {
+        await ctx.editMessageText(
+          `➕ *Credit USD*\n\nUser: ${label}\nTG ID: \`${uid}\`\nBalance: ${bal} USD\n\nHow many USD to *add*?`,
+          { parse_mode: "Markdown", reply_markup: undefined },
+        );
+      } catch (e) {
+        // Fallback without Markdown if username still breaks parsing
+        await ctx.editMessageText(
+          `➕ Credit USD\n\nUser: ${user?.username ? `@${user.username}` : uid}\nTG ID: ${uid}\nBalance: ${bal} USD\n\nHow many USD to add?`,
+          { reply_markup: undefined },
+        );
+        logger.warn({ e, uid }, "admin_credit editMessageText markdown failed — used plain text");
+      }
       return;
     }
 
@@ -743,10 +782,19 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       sess.pendingUserId = uid;
       sess.step = "remove_chips_amount";
       const user = await getUserByTgId(uid);
-      await ctx.editMessageText(
-        `➖ *Debit USD*\n\nUser: ${user?.username ? `@${user.username}` : uid}\nBalance: ${user ? parseFloat(user.chips).toFixed(0) : "?"}\n\nHow many USD to *remove*?`,
-        { parse_mode: "Markdown", reply_markup: undefined },
-      );
+      const label = user ? displayUser(user) : uid;
+      const bal = user ? parseFloat(user.chips).toFixed(0) : "?";
+      try {
+        await ctx.editMessageText(
+          `➖ *Debit USD*\n\nUser: ${label}\nTG ID: \`${uid}\`\nBalance: ${bal} USD\n\nHow many USD to *remove*?`,
+          { parse_mode: "Markdown", reply_markup: undefined },
+        );
+      } catch {
+        await ctx.editMessageText(
+          `➖ Debit USD\n\nUser: ${user?.username ? `@${user.username}` : uid}\nTG ID: ${uid}\nBalance: ${bal} USD\n\nHow many USD to remove?`,
+          { reply_markup: undefined },
+        );
+      }
       return;
     }
 
@@ -867,17 +915,17 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       return;
     }
 
-    // ── Add chips: user ID ──────────────────────────────────────────────────
+    // ── Add chips: user ID or @username ─────────────────────────────────────
     if (sess.step === "add_chips_user") {
-      const user = await getUserByTgId(text.replace("@", ""));
+      const user = await findUserByTgOrUsername(text);
       if (!user) {
-        await ctx.reply("❌ User not found. Please use the numeric Telegram ID.");
+        await ctx.reply("❌ User not found. Enter numeric Telegram ID or @username.");
         return;
       }
       sess.pendingUserId = user.telegramId;
       sess.step = "add_chips_amount";
       await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to add?`,
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nTG ID: ${user.telegramId}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to add?`,
       );
       return;
     }
@@ -888,35 +936,47 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         await ctx.reply("❌ Please enter a valid number.");
         return;
       }
-      await addChips(sess.pendingUserId, amount, "admin_credit", `Admin added ${amount} USD`);
       const creditedId = sess.pendingUserId;
-      sess.step = undefined;
-      delete sess.pendingUserId;
-      await notifyCasinoUser(
-        creditedId,
-        `🎁 *USD Credited!*\n\nAdmin added *${amount} USD* to your balance.`,
-      );
-      const detail = await buildUserDetail(creditedId);
-      await ctx.reply(`✅ ${amount} USD credited. User notified.`, {
-        parse_mode: "Markdown",
-        reply_markup: detail
-          ? { inline_keyboard: detail.keyboard }
-          : adminUsersMenu(),
-      });
+      try {
+        const newBal = await addChips(
+          creditedId,
+          amount,
+          "admin_credit",
+          `Admin added ${amount} USD`,
+        );
+        sess.step = undefined;
+        delete sess.pendingUserId;
+        await notifyCasinoUser(
+          creditedId,
+          `🎁 *USD Credited!*\n\nAdmin added *$${amount.toFixed(2)}* to your balance.\nNew balance: *$${newBal.toFixed(2)}*`,
+        );
+        const detail = await buildUserDetail(creditedId);
+        await ctx.reply(
+          `✅ $${amount.toFixed(2)} USD credited to ${creditedId}.\nNew balance: $${newBal.toFixed(2)}\nUser notified.`,
+          {
+            reply_markup: detail
+              ? { inline_keyboard: detail.keyboard }
+              : adminUsersMenu(),
+          },
+        );
+      } catch (e) {
+        logger.error({ e, creditedId, amount }, "admin credit failed");
+        await ctx.reply(`❌ Credit failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
       return;
     }
 
-    // ── Remove chips: user ID ───────────────────────────────────────────────
+    // ── Remove chips: user ID or @username ──────────────────────────────────
     if (sess.step === "remove_chips_user") {
-      const user = await getUserByTgId(text.replace("@", ""));
+      const user = await findUserByTgOrUsername(text);
       if (!user) {
-        await ctx.reply("❌ User not found.");
+        await ctx.reply("❌ User not found. Enter numeric Telegram ID or @username.");
         return;
       }
       sess.pendingUserId = user.telegramId;
       sess.step = "remove_chips_amount";
       await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to remove?`,
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nTG ID: ${user.telegramId}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to remove?`,
       );
       return;
     }
@@ -930,7 +990,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       try {
         await deductChips(sess.pendingUserId, amount, "admin_debit", `Admin removed ${amount} USD`);
       } catch (e) {
-        await ctx.reply(`❌ ${String(e)}`);
+        await ctx.reply(`❌ ${e instanceof Error ? e.message : String(e)}`);
         return;
       }
       const debitedId = sess.pendingUserId;
@@ -953,28 +1013,39 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     // ── Find user ───────────────────────────────────────────────────────────
     if (sess.step === "find_user") {
       sess.step = undefined;
-      const detail = await buildUserDetail(text.replace("@", ""));
-      if (!detail) {
-        await ctx.reply("❌ User not found. Use numeric Telegram ID.");
+      const found = await findUserByTgOrUsername(text);
+      if (!found) {
+        await ctx.reply("❌ User not found. Use numeric Telegram ID or @username.");
         return;
       }
-      await ctx.reply(detail.text, {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: detail.keyboard },
-      });
+      const detail = await buildUserDetail(found.telegramId);
+      if (!detail) {
+        await ctx.reply("❌ User not found.");
+        return;
+      }
+      try {
+        await ctx.reply(detail.text, {
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: detail.keyboard },
+        });
+      } catch {
+        await ctx.reply(`User ${found.telegramId}`, {
+          reply_markup: { inline_keyboard: detail.keyboard },
+        });
+      }
       return;
     }
 
     // ── Ban user ────────────────────────────────────────────────────────────
     if (sess.step === "ban_user") {
       sess.step = undefined;
-      const user = await getUserByTgId(text);
+      const user = await findUserByTgOrUsername(text);
       if (!user) {
-        await ctx.reply("❌ User not found.");
+        await ctx.reply("❌ User not found. Use numeric Telegram ID or @username.");
         return;
       }
       await ctx.reply(
-        `User: ${user.username ? `@${user.username}` : user.firstName}\nAre you sure you want to ban this user?`,
+        `User: ${user.username ? `@${user.username}` : user.firstName} (${user.telegramId})\nAre you sure you want to ban this user?`,
         {
           reply_markup: {
             inline_keyboard: [

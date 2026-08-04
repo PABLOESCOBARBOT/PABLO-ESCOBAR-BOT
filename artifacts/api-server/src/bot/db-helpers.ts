@@ -62,6 +62,19 @@ export async function getUserByTgId(telegramId: string): Promise<User | null> {
   return rows[0] ?? null;
 }
 
+/** Lookup by numeric Telegram ID or @username (case-insensitive). */
+export async function findUserByTgOrUsername(input: string): Promise<User | null> {
+  const raw = input.trim().replace(/^@/, "");
+  if (!raw) return null;
+  if (/^\d{3,}$/.test(raw)) return getUserByTgId(raw);
+  const rows = await db
+    .select()
+    .from(usersTable)
+    .where(sql`lower(${usersTable.username}) = ${raw.toLowerCase()}`)
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function getUserById(id: number): Promise<User | null> {
   const rows = await db
     .select()
