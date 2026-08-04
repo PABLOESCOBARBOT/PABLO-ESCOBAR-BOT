@@ -980,15 +980,25 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
     // ── Remove chips: user ID or @username ──────────────────────────────────
     if (sess.step === "remove_chips_user") {
-      const user = await findUserByTgOrUsername(text);
-      if (!user) {
-        await ctx.reply("❌ User not found. Enter numeric Telegram ID or @username.");
+      const resolved = await resolveUserForAdmin(text);
+      if (!resolved.user) {
+        await ctx.reply(`❌ ${resolved.hint}`);
+        return;
+      }
+      const user = resolved.user;
+      if (resolved.created || parseFloat(user.chips) <= 0) {
+        await ctx.reply(
+          `User ${user.telegramId} has balance $${parseFloat(user.chips).toFixed(2)}. Nothing to remove.`,
+        );
+        sess.step = undefined;
         return;
       }
       sess.pendingUserId = user.telegramId;
       sess.step = "remove_chips_amount";
       await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nTG ID: ${user.telegramId}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to remove?`,
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName ?? "—"}\n` +
+          `TG ID: ${user.telegramId}\n` +
+          `Balance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to remove?`,
       );
       return;
     }
