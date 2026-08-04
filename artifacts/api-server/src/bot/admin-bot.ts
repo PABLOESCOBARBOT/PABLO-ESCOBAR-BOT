@@ -4,6 +4,7 @@ import {
   getUserByTgId,
   getUserById,
   findUserByTgOrUsername,
+  resolveUserForAdmin,
   getStats,
   getAllUsers,
   getAllTelegramIds,
@@ -661,7 +662,10 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     if (data === "admin_add_chips") {
       sess.step = "add_chips_user";
       await ctx.editMessageText(
-        "➕ *Add / Give USD*\n\nEnter the user's Telegram ID:",
+        "➕ *Add / Give USD*\n\n" +
+          "Enter the user's *numeric Telegram ID* (best).\n" +
+          "Or @username if they already used the casino bot.\n\n" +
+          "_Tip: get ID from @userinfobot_",
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -917,15 +921,23 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
     // ── Add chips: user ID or @username ─────────────────────────────────────
     if (sess.step === "add_chips_user") {
-      const user = await findUserByTgOrUsername(text);
-      if (!user) {
-        await ctx.reply("❌ User not found. Enter numeric Telegram ID or @username.");
+      const resolved = await resolveUserForAdmin(text);
+      if (!resolved.user) {
+        await ctx.reply(`❌ ${resolved.hint}`);
         return;
       }
+      const user = resolved.user;
       sess.pendingUserId = user.telegramId;
       sess.step = "add_chips_amount";
+      const createdNote = resolved.created
+        ? "\n🆕 New account created (they hadn't /start'd yet).\n"
+        : "\n";
       await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName}\nTG ID: ${user.telegramId}\nBalance: ${parseFloat(user.chips).toFixed(0)} USD\n\nHow many USD to add?`,
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName ?? "—"}\n` +
+          `TG ID: ${user.telegramId}\n` +
+          `Balance: ${parseFloat(user.chips).toFixed(0)} USD` +
+          createdNote +
+          `\nHow many USD to add?`,
       );
       return;
     }

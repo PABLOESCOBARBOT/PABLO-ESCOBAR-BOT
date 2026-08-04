@@ -75,6 +75,37 @@ export async function findUserByTgOrUsername(input: string): Promise<User | null
   return rows[0] ?? null;
 }
 
+/**
+ * Admin resolve: find by ID/@username.
+ * If numeric Telegram ID is new (never /start'd casino bot), create the account.
+ */
+export async function resolveUserForAdmin(
+  input: string,
+): Promise<{ user: User; created: boolean } | { user: null; created: false; hint: string }> {
+  const raw = input.trim().replace(/^@/, "");
+  if (!raw) {
+    return { user: null, created: false, hint: "Enter a numeric Telegram ID or @username." };
+  }
+
+  const existing = await findUserByTgOrUsername(raw);
+  if (existing) return { user: existing, created: false };
+
+  // Username unknown — we can't invent a Telegram ID from a handle alone
+  if (!/^\d{3,}$/.test(raw)) {
+    return {
+      user: null,
+      created: false,
+      hint:
+        "Username not in database. Ask them to open the casino bot and tap /start, " +
+        "or enter their numeric Telegram ID (from @userinfobot).",
+    };
+  }
+
+  // Numeric ID: create shell account so admin can credit immediately
+  const user = await getOrCreateUser(raw);
+  return { user, created: true };
+}
+
 export async function getUserById(id: number): Promise<User | null> {
   const rows = await db
     .select()
