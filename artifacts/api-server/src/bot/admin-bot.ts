@@ -209,6 +209,71 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     );
   });
 
+  /**
+   * One-shot credit — does not depend on in-memory session step.
+   * Usage: /give 7007935695 50   or   /give 7007935695
+   */
+  bot.command("give", async (ctx) => {
+    const parts = (ctx.message.text ?? "").trim().split(/\s+/);
+    const target = parts[1];
+    const amountRaw = parts[2];
+    if (!target) {
+      await ctx.reply(
+        "Usage:\n`/give <telegram_id> <amount>`\n`/give <telegram_id>` (then enter amount)\n\nExample: `/give 7007935695 50`",
+        { parse_mode: "Markdown" },
+      );
+      return;
+    }
+    try {
+      const resolved = await resolveUserForAdmin(target);
+      if (!resolved.user) {
+        await ctx.reply(`❌ ${resolved.hint}`);
+        return;
+      }
+      const user = resolved.user;
+      if (amountRaw !== undefined) {
+        const amount = parseFloat(amountRaw);
+        if (isNaN(amount) || amount <= 0) {
+          await ctx.reply("❌ Amount must be a positive number.");
+          return;
+        }
+        const newBal = await addChips(
+          user.telegramId,
+          amount,
+          "admin_credit",
+          `Admin /give ${amount} USD`,
+        );
+        await notifyCasinoUser(
+          user.telegramId,
+          `🎁 *USD Credited!*\n\nAdmin added *$${amount.toFixed(2)}* to your balance.\nNew balance: *$${newBal.toFixed(2)}*`,
+        );
+        const createdNote = resolved.created ? " (new account created)" : "";
+        await ctx.reply(
+          `✅ $${amount.toFixed(2)} credited to ${user.telegramId}${createdNote}.\nNew balance: $${newBal.toFixed(2)}`,
+          { reply_markup: adminMenu() },
+        );
+        ctx.session.step = undefined;
+        delete ctx.session.pendingUserId;
+        return;
+      }
+      ctx.session.pendingUserId = user.telegramId;
+      ctx.session.step = "add_chips_amount";
+      const createdNote = resolved.created
+        ? "\n🆕 New account created (they hadn't /start'd yet).\n"
+        : "\n";
+      await ctx.reply(
+        `✅ User: ${user.username ? `@${user.username}` : user.firstName ?? "—"}\n` +
+          `TG ID: ${user.telegramId}\n` +
+          `Balance: ${parseFloat(user.chips).toFixed(0)} USD` +
+          createdNote +
+          `\nHow many USD to add?`,
+      );
+    } catch (e) {
+      logger.error({ e, target }, "admin /give failed");
+      await ctx.reply(`❌ Credit failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
+
   // ── Callback queries ──────────────────────────────────────────────────────
   bot.on("callback_query", async (ctx): Promise<void> => {
     const data = (ctx.callbackQuery as { data?: string }).data;
@@ -665,7 +730,9 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         "➕ *Add / Give USD*\n\n" +
           "Enter the user's *numeric Telegram ID* (best).\n" +
           "Or @username if they already used the casino bot.\n\n" +
-          "_Tip: get ID from @userinfobot_",
+          "Fast path (works anytime):\n" +
+          "`/give 7007935695 50`\n\n" +
+          "Tip: get ID from @userinfobot",
         { parse_mode: "Markdown", reply_markup: undefined },
       );
       return;
@@ -921,24 +988,29 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
     // ── Add chips: user ID or @username ─────────────────────────────────────
     if (sess.step === "add_chips_user") {
-      const resolved = await resolveUserForAdmin(text);
-      if (!resolved.user) {
-        await ctx.reply(`❌ ${resolved.hint}`);
-        return;
+      try {
+        const resolved = await resolveUserForAdmin(text);
+        if (!resolved.user) {
+          await ctx.reply(`❌ ${resolved.hint}`);
+          return;
+        }
+        const user = resolved.user;
+        sess.pendingUserId = user.telegramId;
+        sess.step = "add_chips_amount";
+        const createdNote = resolved.created
+          ? "\n🆕 New account created (they hadn't /start'd yet).\n"
+          : "\n";
+        await ctx.reply(
+          `✅ User: ${user.username ? `@${user.username}` : user.firstName ?? "—"}\n` +
+            `TG ID: ${user.telegramId}\n` +
+            `Balance: ${parseFloat(user.chips).toFixed(0)} USD` +
+            createdNote +
+            `\nHow many USD to add?`,
+        );
+      } catch (e) {
+        logger.error({ e, text }, "admin add_chips_user failed");
+        await ctx.reply(`❌ Lookup failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const user = resolved.user;
-      sess.pendingUserId = user.telegramId;
-      sess.step = "add_chips_amount";
-      const createdNote = resolved.created
-        ? "\n🆕 New account created (they hadn't /start'd yet).\n"
-        : "\n";
-      await ctx.reply(
-        `✅ User: ${user.username ? `@${user.username}` : user.firstName ?? "—"}\n` +
-          `TG ID: ${user.telegramId}\n` +
-          `Balance: ${parseFloat(user.chips).toFixed(0)} USD` +
-          createdNote +
-          `\nHow many USD to add?`,
-      );
       return;
     }
 
@@ -1109,6 +1181,45 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
         { parse_mode: "Markdown", reply_markup: adminMenu() },
       );
       return;
+    }
+
+    // ── Session lost (e.g. after /start) but admin pasted an ID / @username ──
+    // Recover into Give USD instead of silently ignoring.
+    if (!sess.step && !text.startsWith("/")) {
+      const looksLikeTgId = /^\d{6,}$/.test(text.trim());
+      const looksLikeUsername = /^@?[A-Za-z][A-Za-z0-9_]{4,}$/.test(text.trim());
+      if (looksLikeTgId || looksLikeUsername) {
+        try {
+          const resolved = await resolveUserForAdmin(text);
+          if (!resolved.user) {
+            await ctx.reply(
+              `❌ ${resolved.hint}\n\nTip: \`/give 7007935695 50\` works anytime.`,
+              { parse_mode: "Markdown" },
+            );
+            return;
+          }
+          const user = resolved.user;
+          sess.pendingUserId = user.telegramId;
+          sess.step = "add_chips_amount";
+          const createdNote = resolved.created
+            ? "\n🆕 New account created (they hadn't /start'd yet).\n"
+            : "\n";
+          const label = user.username
+            ? `@${user.username}`
+            : user.firstName ?? "—";
+          await ctx.reply(
+            `✅ Starting Give USD for ${label}\n` +
+              `TG ID: ${user.telegramId}\n` +
+              `Balance: ${parseFloat(user.chips).toFixed(0)} USD` +
+              createdNote +
+              `\nHow many USD to add?\n\nOr: /give ${user.telegramId} 50`,
+          );
+        } catch (e) {
+          logger.error({ e, text }, "admin idle ID lookup failed");
+          await ctx.reply(`❌ Lookup failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        return;
+      }
     }
   });
 

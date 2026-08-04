@@ -39,16 +39,36 @@ export async function getOrCreateUser(
     .limit(1);
 
   if (existing[0]) {
+    const patch: {
+      username?: string;
+      firstName?: string;
+      lastName?: string;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
+    if (username !== undefined) patch.username = username;
+    if (firstName !== undefined) patch.firstName = firstName;
+    if (lastName !== undefined) patch.lastName = lastName;
     await db
       .update(usersTable)
-      .set({ username, firstName, lastName, updatedAt: new Date() })
+      .set(patch)
       .where(eq(usersTable.telegramId, telegramId));
-    return { ...existing[0], username: username ?? existing[0].username };
+    return {
+      ...existing[0],
+      username: username ?? existing[0].username,
+      firstName: firstName ?? existing[0].firstName,
+      lastName: lastName ?? existing[0].lastName,
+    };
   }
 
   const inserted = await db
     .insert(usersTable)
-    .values({ telegramId, username, firstName, lastName, chips: "0" })
+    .values({
+      telegramId,
+      username: username ?? null,
+      firstName: firstName ?? null,
+      lastName: lastName ?? null,
+      chips: "0",
+    })
     .returning();
   return inserted[0]!;
 }
@@ -102,8 +122,14 @@ export async function resolveUserForAdmin(
   }
 
   // Numeric ID: create shell account so admin can credit immediately
-  const user = await getOrCreateUser(raw);
-  return { user, created: true };
+  try {
+    const user = await getOrCreateUser(raw);
+    return { user, created: true };
+  } catch (e) {
+    throw new Error(
+      `Could not create user ${raw}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 export async function getUserById(id: number): Promise<User | null> {
