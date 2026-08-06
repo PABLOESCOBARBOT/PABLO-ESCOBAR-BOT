@@ -4,6 +4,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { isNowPaymentsEnabled, getIpnCallbackUrl } from "./bot/nowpayments";
+import { botStatus } from "./bot/bot-status";
 
 const app: Express = express();
 
@@ -39,6 +40,7 @@ app.get("/health", (_req, res) => {
     ok: true,
     nowpayments: isNowPaymentsEnabled(),
     ipnConfigured: Boolean(getIpnCallbackUrl()),
+    bots: botStatus,
   });
 });
 

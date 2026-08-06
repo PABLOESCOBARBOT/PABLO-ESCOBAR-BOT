@@ -19,6 +19,7 @@ import {
 } from "./bot/db-helpers";
 import { chatGameMenuCommands } from "./bot/chat-games/register";
 import { ensureSchema } from "./ensure-schema";
+import { botStatus } from "./bot/bot-status";
 
 const port = Number(process.env["PORT"] ?? "3000");
 if (Number.isNaN(port) || port <= 0) {
@@ -51,8 +52,19 @@ async function boot(): Promise<void> {
   if (!casinoToken) {
     logger.warn("CASINO_BOT_TOKEN not set — main casino bot will not start");
   } else {
+    botStatus.casino.configured = true;
     const casinoBot = createCasinoBot(casinoToken);
     setCasinoBotForNotifications(casinoBot);
+
+    try {
+      await casinoBot.telegram.deleteWebhook({ drop_pending_updates: true });
+      const me = await casinoBot.telegram.getMe();
+      botStatus.casino.username = me.username ?? null;
+      logger.info({ username: me.username, id: me.id }, "Casino bot token OK");
+    } catch (err) {
+      botStatus.casino.lastError = err instanceof Error ? err.message : String(err);
+      logger.error({ err }, "CASINO_BOT_TOKEN invalid — getMe/deleteWebhook failed");
+    }
 
     casinoBot.telegram
       .setMyCommands([
@@ -75,7 +87,11 @@ async function boot(): Promise<void> {
       .then(() => logger.info("📋 Casino bot Menu commands set"))
       .catch((err) => logger.warn({ err }, "Failed to set casino bot commands"));
 
-    casinoBot.launch({ dropPendingUpdates: true }).catch((err) => {
+    casinoBot.launch({ dropPendingUpdates: true }).then(() => {
+      botStatus.casino.polling = true;
+    }).catch((err) => {
+      botStatus.casino.polling = false;
+      botStatus.casino.lastError = err instanceof Error ? err.message : String(err);
       logger.error({ err }, "Failed to start Casino Bot");
     });
     logger.info("🎰 Casino Bot started (polling)");
@@ -139,11 +155,17 @@ async function boot(): Promise<void> {
 
   if (!adminToken) {
     logger.error("ADMIN_BOT_TOKEN not set — admin bot will not start");
+  } else if (casinoToken && adminToken === casinoToken) {
+    botStatus.admin.tokensClashWithCasino = true;
+    logger.error(
+      "ADMIN_BOT_TOKEN is the SAME as CASINO_BOT_TOKEN — admin bot cannot poll. Create a separate bot in @BotFather.",
+    );
   } else {
     const adminIds = (process.env["ADMIN_TELEGRAM_IDS"] ?? "")
       .split(/[,;\s]+/)
-      .map((s) => s.trim())
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
       .filter((s) => /^\d+$/.test(s));
+    botStatus.admin.allowListCount = adminIds.length;
     if (adminIds.length === 0) {
       logger.error(
         "ADMIN_TELEGRAM_IDS missing/invalid — admin bot starts but will deny all users. Set your numeric Telegram ID.",
@@ -154,15 +176,19 @@ async function boot(): Promise<void> {
     setAdminBotForNotifications(adminBot);
 
     try {
+      await adminBot.telegram.deleteWebhook({ drop_pending_updates: true });
       const me = await adminBot.telegram.getMe();
+      botStatus.admin.username = me.username ?? null;
       logger.info({ username: me.username, id: me.id }, "Admin bot token OK");
     } catch (err) {
+      botStatus.admin.lastError = err instanceof Error ? err.message : String(err);
       logger.error({ err }, "ADMIN_BOT_TOKEN invalid — getMe failed. Fix token on Railway.");
     }
 
     adminBot.telegram
       .setMyCommands([
         { command: "start", description: "🛠 Open admin panel" },
+        { command: "ping", description: "✅ Check admin bot is alive" },
         { command: "menu", description: "📋 Admin menu" },
         { command: "give", description: "💵 Give USD: /give <id> <amount>" },
         { command: "deposits", description: "💰 Pending deposits" },
@@ -174,13 +200,22 @@ async function boot(): Promise<void> {
       .catch((err) => logger.warn({ err }, "Failed to set admin bot commands"));
 
     const launchAdmin = (attempt = 1) => {
-      adminBot.launch({ dropPendingUpdates: true }).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error({ err, attempt }, "Failed to start Admin Bot");
-        if (attempt < 5 && /409|Conflict/i.test(msg)) {
-          setTimeout(() => launchAdmin(attempt + 1), attempt * 2000);
-        }
-      });
+      adminBot
+        .launch({ dropPendingUpdates: true })
+        .then(() => {
+          botStatus.admin.polling = true;
+          botStatus.admin.lastError = null;
+          logger.info({ attempt }, "Admin bot polling active");
+        })
+        .catch((err) => {
+          botStatus.admin.polling = false;
+          const msg = err instanceof Error ? err.message : String(err);
+          botStatus.admin.lastError = msg;
+          logger.error({ err, attempt }, "Failed to start Admin Bot");
+          if (attempt < 8 && /409|Conflict/i.test(msg)) {
+            setTimeout(() => launchAdmin(attempt + 1), attempt * 2500);
+          }
+        });
     };
     launchAdmin();
     logger.info("🛠 Admin Bot started (polling)");

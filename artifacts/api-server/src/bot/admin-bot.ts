@@ -37,6 +37,8 @@ import {
   adminUsersMenu,
 } from "./keyboards";
 import { notifyCasinoUser } from "./bot-notify";
+import { botStatus, noteAdminError, noteAdminUpdate } from "./bot-status";
+import type { AdminFlowState } from "./db-helpers";
 
 const CRYPTO_OPTIONS = [
   { key: "usdt_trc20", label: "USDT (TRC20)", network: "Tron (TRC20)" },
@@ -157,6 +159,8 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
   const casinoBotUsername = (process.env["CASINO_BOT_USERNAME"] ?? "").replace("@", "");
   const adminIdCount = parseAdminIds().length;
+  botStatus.admin.allowListCount = adminIdCount;
+  botStatus.admin.configured = true;
   if (adminIdCount === 0) {
     logger.error(
       "ADMIN_TELEGRAM_IDS is empty or invalid — admin bot will reject everyone. Set numeric Telegram IDs on Railway.",
@@ -164,6 +168,10 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   } else {
     logger.info({ adminIdCount }, "Admin allow-list loaded");
   }
+
+  /** In-memory flow cache — never block replies on Postgres. */
+  const memoryFlows = new Map<string, AdminFlowState>();
+  const dbHydrated = new Set<string>();
 
   /** Resolve @username → Telegram ID via Bot API (works without casino /start). */
   const lookupChat: TelegramChatLookup = async (username) => {
@@ -196,6 +204,7 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     resolveUserForAdmin(input, lookupChat);
 
   bot.catch(async (err, ctx) => {
+    noteAdminError(err);
     logger.error({ err, updateType: ctx.updateType }, "Admin bot handler error");
     try {
       await ctx.reply(`❌ Admin error: ${err instanceof Error ? err.message : String(err)}`);
@@ -204,18 +213,29 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     }
   });
 
+  // Trace every update (helps debug "bot not working" on Railway logs)
+  bot.use(async (ctx, next) => {
+    noteAdminUpdate(ctx.updateType, ctx.from?.id != null ? String(ctx.from.id) : undefined);
+    logger.info(
+      { type: ctx.updateType, from: ctx.from?.id },
+      "admin bot update",
+    );
+    return next();
+  });
+
   // ── Auth middleware ───────────────────────────────────────────────────────
   bot.use(async (ctx, next) => {
     const id = String(ctx.from?.id ?? "");
     if (!isAdmin(id)) {
       if ("message" in ctx.update || "callback_query" in ctx.update) {
         const configured = parseAdminIds().length;
+        logger.warn({ id, configured }, "admin access denied");
         await ctx.reply(
           "⛔ Access denied. This bot is for admins only.\n\n" +
             `Your Telegram ID: ${id || "unknown"}\n` +
             (configured === 0
-              ? "Railway: set ADMIN_TELEGRAM_IDS to your numeric ID."
-              : "Add this ID to ADMIN_TELEGRAM_IDS on Railway (comma-separated), then redeploy."),
+              ? "Railway: set ADMIN_TELEGRAM_IDS to your numeric ID (from @userinfobot)."
+              : "Railway → Variables → ADMIN_TELEGRAM_IDS must include this exact number, then Redeploy."),
         );
       }
       return;
@@ -223,42 +243,45 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     return next();
   });
 
-  // ── Durable flow state (Postgres) — source of truth across restarts ───────
+  // ── Flow state: memory first, DB hydrate once, save async (non-blocking) ──
   bot.use(async (ctx, next) => {
     const id = String(ctx.from?.id ?? "");
     if (!id) return next();
     if (!ctx.session) ctx.session = {} as AdminSession;
-    try {
-      const saved = await withTimeout(loadAdminFlow(id), 5_000, "loadAdminFlow");
-      // DB wins: hydrate or clear so memory can't drift after redeploy
-      ctx.session.step = saved.step;
-      ctx.session.pendingUserId = saved.pendingUserId;
-      ctx.session.pendingTxId = saved.pendingTxId;
-      ctx.session.pendingCrypto = saved.pendingCrypto;
-      ctx.session.pendingAddr = saved.pendingAddr;
-    } catch (e) {
-      logger.warn({ e }, "loadAdminFlow failed — using memory session only");
-    }
-    try {
-      await next();
-    } finally {
+
+    let saved = memoryFlows.get(id);
+    if (!saved && !dbHydrated.has(id)) {
+      dbHydrated.add(id);
       try {
-        if (!ctx.session) return;
-        await withTimeout(
-          saveAdminFlow(id, {
-            step: ctx.session.step,
-            pendingUserId: ctx.session.pendingUserId,
-            pendingTxId: ctx.session.pendingTxId,
-            pendingCrypto: ctx.session.pendingCrypto,
-            pendingAddr: ctx.session.pendingAddr,
-          }),
-          5_000,
-          "saveAdminFlow",
-        );
+        saved = await withTimeout(loadAdminFlow(id), 2_000, "loadAdminFlow");
+        memoryFlows.set(id, saved);
       } catch (e) {
-        logger.warn({ e }, "saveAdminFlow failed");
+        logger.warn({ e }, "loadAdminFlow failed — memory only");
+        saved = {};
       }
     }
+    saved = saved ?? {};
+    ctx.session.step = saved.step;
+    ctx.session.pendingUserId = saved.pendingUserId;
+    ctx.session.pendingTxId = saved.pendingTxId;
+    ctx.session.pendingCrypto = saved.pendingCrypto;
+    ctx.session.pendingAddr = saved.pendingAddr;
+
+    await next();
+
+    if (!ctx.session) return;
+    const state: AdminFlowState = {
+      step: ctx.session.step,
+      pendingUserId: ctx.session.pendingUserId,
+      pendingTxId: ctx.session.pendingTxId,
+      pendingCrypto: ctx.session.pendingCrypto,
+      pendingAddr: ctx.session.pendingAddr,
+    };
+    memoryFlows.set(id, state);
+    // Fire-and-forget — never delay Telegram replies on DB
+    void saveAdminFlow(id, state).catch((e) =>
+      logger.warn({ e }, "saveAdminFlow failed"),
+    );
   });
 
   function clearFlow(sess: AdminSession): void {
@@ -314,6 +337,15 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
     await ctx.reply("👑 Admin Panel\n\nSelect an action:", {
       reply_markup: adminMenu(),
     });
+  });
+
+  bot.command("ping", async (ctx) => {
+    await ctx.reply(
+      `✅ Admin bot alive\n` +
+        `Your ID: ${ctx.from?.id}\n` +
+        `Allow-list size: ${parseAdminIds().length}\n` +
+        `Time: ${new Date().toISOString()}`,
+    );
   });
 
   // Shortcut commands (shown in Telegram Menu button)
