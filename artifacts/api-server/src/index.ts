@@ -138,15 +138,33 @@ async function boot(): Promise<void> {
   }
 
   if (!adminToken) {
-    logger.warn("ADMIN_BOT_TOKEN not set — admin bot will not start");
+    logger.error("ADMIN_BOT_TOKEN not set — admin bot will not start");
   } else {
+    const adminIds = (process.env["ADMIN_TELEGRAM_IDS"] ?? "")
+      .split(/[,;\s]+/)
+      .map((s) => s.trim())
+      .filter((s) => /^\d+$/.test(s));
+    if (adminIds.length === 0) {
+      logger.error(
+        "ADMIN_TELEGRAM_IDS missing/invalid — admin bot starts but will deny all users. Set your numeric Telegram ID.",
+      );
+    }
+
     const adminBot = createAdminBot(adminToken);
     setAdminBotForNotifications(adminBot);
+
+    try {
+      const me = await adminBot.telegram.getMe();
+      logger.info({ username: me.username, id: me.id }, "Admin bot token OK");
+    } catch (err) {
+      logger.error({ err }, "ADMIN_BOT_TOKEN invalid — getMe failed. Fix token on Railway.");
+    }
 
     adminBot.telegram
       .setMyCommands([
         { command: "start", description: "🛠 Open admin panel" },
         { command: "menu", description: "📋 Admin menu" },
+        { command: "give", description: "💵 Give USD: /give <id> <amount>" },
         { command: "deposits", description: "💰 Pending deposits" },
         { command: "withdrawals", description: "📤 Pending withdrawals" },
         { command: "users", description: "👥 User management" },
@@ -155,9 +173,16 @@ async function boot(): Promise<void> {
       .then(() => logger.info("📋 Admin bot Menu commands set"))
       .catch((err) => logger.warn({ err }, "Failed to set admin bot commands"));
 
-    adminBot.launch({ dropPendingUpdates: true }).catch((err) => {
-      logger.error({ err }, "Failed to start Admin Bot");
-    });
+    const launchAdmin = (attempt = 1) => {
+      adminBot.launch({ dropPendingUpdates: true }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error({ err, attempt }, "Failed to start Admin Bot");
+        if (attempt < 5 && /409|Conflict/i.test(msg)) {
+          setTimeout(() => launchAdmin(attempt + 1), attempt * 2000);
+        }
+      });
+    };
+    launchAdmin();
     logger.info("🛠 Admin Bot started (polling)");
 
     process.once("SIGINT", () => adminBot.stop("SIGINT"));

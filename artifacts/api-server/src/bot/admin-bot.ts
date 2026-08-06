@@ -61,11 +61,31 @@ type AdminCtx = Context & { session: AdminSession };
 
 function parseAdminIds(): string[] {
   const raw = process.env["ADMIN_TELEGRAM_IDS"] ?? "";
-  return raw.split(",").map(s => s.trim()).filter(Boolean);
+  // Support comma/space/newline separated IDs; strip @ and quotes
+  return raw
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().replace(/^["']|["']$/g, "").replace(/^@/, ""))
+    .filter((s) => /^\d+$/.test(s));
 }
 
 function isAdmin(tgId: string): boolean {
-  return parseAdminIds().includes(tgId);
+  const ids = parseAdminIds();
+  if (ids.length === 0) return false;
+  return ids.includes(String(tgId).trim());
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Escape Telegram legacy Markdown special chars (usernames often contain `_`). */
@@ -136,12 +156,22 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   bot.use(session({ defaultSession: () => ({} as AdminSession) }));
 
   const casinoBotUsername = (process.env["CASINO_BOT_USERNAME"] ?? "").replace("@", "");
+  const adminIdCount = parseAdminIds().length;
+  if (adminIdCount === 0) {
+    logger.error(
+      "ADMIN_TELEGRAM_IDS is empty or invalid — admin bot will reject everyone. Set numeric Telegram IDs on Railway.",
+    );
+  } else {
+    logger.info({ adminIdCount }, "Admin allow-list loaded");
+  }
 
   /** Resolve @username → Telegram ID via Bot API (works without casino /start). */
   const lookupChat: TelegramChatLookup = async (username) => {
     try {
-      const chat = await bot.telegram.getChat(
-        username.startsWith("@") ? username : `@${username}`,
+      const chat = await withTimeout(
+        bot.telegram.getChat(username.startsWith("@") ? username : `@${username}`),
+        8_000,
+        "getChat",
       );
       const telegramId = String(chat.id);
       const uname =
@@ -165,12 +195,28 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   const resolveAdminUser = (input: string) =>
     resolveUserForAdmin(input, lookupChat);
 
+  bot.catch(async (err, ctx) => {
+    logger.error({ err, updateType: ctx.updateType }, "Admin bot handler error");
+    try {
+      await ctx.reply(`❌ Admin error: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      /* ignore reply failures */
+    }
+  });
+
   // ── Auth middleware ───────────────────────────────────────────────────────
   bot.use(async (ctx, next) => {
     const id = String(ctx.from?.id ?? "");
     if (!isAdmin(id)) {
       if ("message" in ctx.update || "callback_query" in ctx.update) {
-        await ctx.reply("⛔ Access denied. This bot is for admins only.");
+        const configured = parseAdminIds().length;
+        await ctx.reply(
+          "⛔ Access denied. This bot is for admins only.\n\n" +
+            `Your Telegram ID: ${id || "unknown"}\n` +
+            (configured === 0
+              ? "Railway: set ADMIN_TELEGRAM_IDS to your numeric ID."
+              : "Add this ID to ADMIN_TELEGRAM_IDS on Railway (comma-separated), then redeploy."),
+        );
       }
       return;
     }
@@ -181,8 +227,9 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
   bot.use(async (ctx, next) => {
     const id = String(ctx.from?.id ?? "");
     if (!id) return next();
+    if (!ctx.session) ctx.session = {} as AdminSession;
     try {
-      const saved = await loadAdminFlow(id);
+      const saved = await withTimeout(loadAdminFlow(id), 5_000, "loadAdminFlow");
       // DB wins: hydrate or clear so memory can't drift after redeploy
       ctx.session.step = saved.step;
       ctx.session.pendingUserId = saved.pendingUserId;
@@ -196,13 +243,18 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
       await next();
     } finally {
       try {
-        await saveAdminFlow(id, {
-          step: ctx.session.step,
-          pendingUserId: ctx.session.pendingUserId,
-          pendingTxId: ctx.session.pendingTxId,
-          pendingCrypto: ctx.session.pendingCrypto,
-          pendingAddr: ctx.session.pendingAddr,
-        });
+        if (!ctx.session) return;
+        await withTimeout(
+          saveAdminFlow(id, {
+            step: ctx.session.step,
+            pendingUserId: ctx.session.pendingUserId,
+            pendingTxId: ctx.session.pendingTxId,
+            pendingCrypto: ctx.session.pendingCrypto,
+            pendingAddr: ctx.session.pendingAddr,
+          }),
+          5_000,
+          "saveAdminFlow",
+        );
       } catch (e) {
         logger.warn({ e }, "saveAdminFlow failed");
       }
@@ -220,24 +272,46 @@ export function createAdminBot(token: string): Telegraf<AdminCtx> {
 
   // ── /start ────────────────────────────────────────────────────────────────
   bot.start(async (ctx) => {
-    clearFlow(ctx.session);
-    const pendingDep = await getPendingDeposits();
-    const pendingWd = await getPendingWithdrawals();
-    await ctx.reply(
-      `👑 *Admin Panel*\n\n` +
+    try {
+      if (!ctx.session) ctx.session = {} as AdminSession;
+      clearFlow(ctx.session);
+      let depCount = 0;
+      let wdCount = 0;
+      let dbNote = "";
+      try {
+        const [pendingDep, pendingWd] = await withTimeout(
+          Promise.all([getPendingDeposits(), getPendingWithdrawals()]),
+          8_000,
+          "admin start stats",
+        );
+        depCount = pendingDep.length;
+        wdCount = pendingWd.length;
+      } catch (e) {
+        logger.warn({ e }, "admin /start stats failed");
+        dbNote = "\n⚠️ DB stats unavailable (check DATABASE_URL).\n";
+      }
+      const text =
+        `👑 Admin Panel\n\n` +
         `Welcome back, Admin.\n` +
-        `Pending deposits: *${pendingDep.length}* · withdrawals: *${pendingWd.length}*\n\n` +
-        `Give USD fast:\n\`/give 7007935695 50\`\n\n` +
-        `Select an action:`,
-      { parse_mode: "Markdown", reply_markup: adminMenu() },
-    );
+        `Pending deposits: ${depCount} · withdrawals: ${wdCount}\n` +
+        dbNote +
+        `\nGive USD fast:\n/give 7007935695 50\n\n` +
+        `Select an action:`;
+      await ctx.reply(text, { reply_markup: adminMenu() });
+    } catch (e) {
+      logger.error({ e }, "admin /start failed");
+      await ctx.reply(
+        "👑 Admin Panel\n\nSomething went wrong loading stats, but you can still use the menu.\n\n/give <id> <amount>",
+        { reply_markup: adminMenu() },
+      );
+    }
   });
 
   // ── /menu command ─────────────────────────────────────────────────────────
   bot.command("menu", async (ctx) => {
+    if (!ctx.session) ctx.session = {} as AdminSession;
     clearFlow(ctx.session);
-    await ctx.reply("👑 *Admin Panel*\n\nSelect an action:", {
-      parse_mode: "Markdown",
+    await ctx.reply("👑 Admin Panel\n\nSelect an action:", {
       reply_markup: adminMenu(),
     });
   });
